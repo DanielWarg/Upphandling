@@ -1,31 +1,31 @@
 # Upphandlingsbevakning MVP
 
-## Project
-Swedish public transport procurement monitoring tool for Hogia. Scrapes TED, Mercell, KommersAnnons, e-Avrop and scores leads by keyword relevance.
+## Projekt
+Svenskt verktyg för att bevaka kollektivtrafikupphandlingar åt Hogia. Scrapar TED, Mercell, KommersAnnons, e-Avrop och scorar leads efter nyckelordsrelevans.
 
-## Tech stack
+## Teknikstack
 - Python 3.11+
-- Streamlit (frontend dashboard)
-- SQLite (database, file: upphandlingar.db)
+- Streamlit (frontend-dashboard)
+- SQLite (databas, fil: upphandlingar.db)
 - httpx (TED API)
-- Scrapling (web scraping: Mercell, KommersAnnons, e-Avrop)
-- pandas (data manipulation)
+- Scrapling (webbskrapning: Mercell, KommersAnnons, e-Avrop)
+- pandas (datahantering)
 
-## Commands
-- `python3 run_scrapers.py` — fetch all sources + score
-- `python3 run_scrapers.py --sources ted` — only TED
-- `python3 run_scrapers.py --score-only` — re-score without scraping
-- `streamlit run app.py` — launch dashboard
+## Kommandon
+- `python3 run_scrapers.py` — hämta alla källor + scora
+- `python3 run_scrapers.py --sources ted` — bara TED
+- `python3 run_scrapers.py --score-only` — omscora utan skrapning
+- `streamlit run app.py` — starta dashboard
 
-## Code conventions
-- Swedish comments/UI text, English code identifiers
-- Type hints on function signatures
-- All scrapers extend `scrapers/base.py:BaseScraper`
-- Database access goes through `db.py` (never raw SQL in other files)
-- Scoring logic lives in `scorer.py`
-- Frontend theme: black/orange/grey SaaS style, no emojis, no AI icons
+## Kodkonventioner
+- Svensk UI-text, engelska kodidentifierare
+- Typhintar på funktionssignaturer
+- Alla scrapers ärver `scrapers/base.py:BaseScraper`
+- Databasåtkomst går genom `db.py` (aldrig rå SQL i andra filer)
+- Scoringlogik finns i `scorer.py`
+- Frontendtema: svart/orange/grått SaaS-stil, inga emojis, inga AI-ikoner
 
 ## Git
 - Remote: https://github.com/DanielWarg/Upphandling
 - Branch: main
-- .gitignore excludes __pycache__, *.db, .env, venv
+- .gitignore exkluderar __pycache__, *.db, .env, venv

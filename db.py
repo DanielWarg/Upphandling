@@ -2,7 +2,7 @@
 
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 DB_PATH = Path(__file__).parent / "upphandlingar.db"
 
@@ -48,7 +48,7 @@ def init_db():
 def upsert_procurement(data: dict) -> int:
     """Insert or update a procurement. Returns the row id."""
     conn = get_connection()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     # Try insert first
     try:
@@ -139,7 +139,7 @@ def update_score(procurement_id: int, score: int, rationale: str):
     conn = get_connection()
     conn.execute(
         "UPDATE procurements SET score = ?, score_rationale = ?, updated_at = ? WHERE id = ?",
-        (score, rationale, datetime.utcnow().isoformat(), procurement_id),
+        (score, rationale, datetime.now(timezone.utc).isoformat(), procurement_id),
     )
     conn.commit()
     conn.close()
@@ -197,7 +197,7 @@ def get_stats() -> dict:
     total = conn.execute("SELECT COUNT(*) as c FROM procurements").fetchone()["c"]
     avg_score = conn.execute("SELECT AVG(score) as a FROM procurements").fetchone()["a"] or 0
     high_fit = conn.execute("SELECT COUNT(*) as c FROM procurements WHERE score >= 60").fetchone()["c"]
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     new_today = conn.execute(
         "SELECT COUNT(*) as c FROM procurements WHERE created_at LIKE ?",
         (f"{today}%",),

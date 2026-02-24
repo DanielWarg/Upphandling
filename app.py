@@ -393,7 +393,7 @@ with st.sidebar:
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Kanban", "Sok & Filter", "Detaljvy", "Installningar"],
+    ["Kanban", "Sök & Filter", "Detaljvy", "Inställningar"],
     label_visibility="collapsed",
 )
 
@@ -420,7 +420,7 @@ def score_bar_color(score: int) -> str:
 def make_card_html(p: dict) -> str:
     s = p.get("score", 0) or 0
     title = (p.get("title") or "Utan titel")[:80]
-    buyer = p.get("buyer") or "Okand kopare"
+    buyer = p.get("buyer") or "Okänd köpare"
     source = (p.get("source") or "").upper()
     deadline = p.get("deadline") or ""
     if deadline and len(deadline) > 10:
@@ -464,15 +464,15 @@ if page == "Kanban":
     c1.metric("Totalt", stats["total"])
     c2.metric("Nya idag", stats["new_today"])
     c3.metric("Snitt score", stats["avg_score"])
-    c4.metric("Hog fit", stats["high_fit"])
+    c4.metric("Hög fit", stats["high_fit"])
 
     all_procs = get_all_procurements()
 
     if not all_procs:
         st.markdown(
             '<div class="empty-state">'
-            '  <div class="empty-state-title">Ingen data annu</div>'
-            '  <div class="empty-state-text">Kor <code>python run_scrapers.py</code> for att hamta upphandlingar.</div>'
+            '  <div class="empty-state-title">Ingen data ännu</div>'
+            '  <div class="empty-state-text">Kör <code>python run_scrapers.py</code> för att hämta upphandlingar.</div>'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -482,9 +482,9 @@ if page == "Kanban":
         low = [p for p in all_procs if (p.get("score") or 0) < 30]
 
         columns_data = [
-            ("Hog prioritet", high, "var(--orange-500)"),
+            ("Hög prioritet", high, "var(--orange-500)"),
             ("Medel", med, "var(--yellow-500)"),
-            ("Lag", low, "var(--border-light)"),
+            ("Låg", low, "var(--border-light)"),
         ]
 
         html = '<div class="kanban-board">'
@@ -508,12 +508,12 @@ if page == "Kanban":
 # ============================================================
 # SOK & FILTER
 # ============================================================
-elif page == "Sok & Filter":
+elif page == "Sök & Filter":
     st.markdown(
         '<div class="top-bar">'
         '  <div>'
-        '    <div class="top-bar-title">Sok & Filter</div>'
-        '    <div class="top-bar-sub">Filtrera upphandlingar efter nyckelord, kalla och score</div>'
+        '    <div class="top-bar-title">Sök & Filter</div>'
+        '    <div class="top-bar-sub">Filtrera upphandlingar efter nyckelord, källa och score</div>'
         '  </div>'
         '</div>',
         unsafe_allow_html=True,
@@ -523,7 +523,7 @@ elif page == "Sok & Filter":
     with col1:
         query = st.text_input("Fritext", placeholder="t.ex. realtidssystem")
     with col2:
-        source_filter = st.selectbox("Kalla", ["Alla", "ted", "mercell", "kommers", "eavrop"])
+        source_filter = st.selectbox("Källa", ["Alla", "ted", "mercell", "kommers", "eavrop"])
     with col3:
         geography_filter = st.text_input("Region", placeholder="t.ex. Stockholm")
     with col4:
@@ -549,7 +549,7 @@ elif page == "Sok & Filter":
         st.markdown(
             '<div class="empty-state">'
             '  <div class="empty-state-title">Inga resultat</div>'
-            '  <div class="empty-state-text">Prova att andpa filtren.</div>'
+            '  <div class="empty-state-text">Prova att ändra filtren.</div>'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -563,7 +563,7 @@ elif page == "Detaljvy":
         '<div class="top-bar">'
         '  <div>'
         '    <div class="top-bar-title">Detaljvy</div>'
-        '    <div class="top-bar-sub">Fullstandig information om en upphandling</div>'
+        '    <div class="top-bar-sub">Fullständig information om en upphandling</div>'
         '  </div>'
         '</div>',
         unsafe_allow_html=True,
@@ -580,7 +580,7 @@ elif page == "Detaljvy":
         if proc.get("url"):
             url_html = f'<a href="{proc["url"]}" target="_blank">{proc["url"]}</a>'
         else:
-            url_html = '<span style="color:var(--text-muted)">Ej tillganglig</span>'
+            url_html = '<span style="color:var(--text-muted)">Ej tillgänglig</span>'
 
         detail_html = f"""
         <div class="detail-panel">
@@ -597,8 +597,8 @@ elif page == "Detaljvy":
             </div>
 
             <div class="detail-row">
-                <div class="detail-label">Kopare</div>
-                <div class="detail-value">{proc.get("buyer") or "Okand"}</div>
+                <div class="detail-label">Köpare</div>
+                <div class="detail-value">{proc.get("buyer") or "Okänd"}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Geografi</div>
@@ -609,27 +609,27 @@ elif page == "Detaljvy":
                 <div class="detail-value">{proc.get("cpv_codes") or "Ej angivet"}</div>
             </div>
             <div class="detail-row">
-                <div class="detail-label">Forfarandetyp</div>
+                <div class="detail-label">Förfarandetyp</div>
                 <div class="detail-value">{proc.get("procedure_type") or "Ej angiven"}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Publicerad</div>
-                <div class="detail-value">{proc.get("published_date") or "Okant"}</div>
+                <div class="detail-value">{proc.get("published_date") or "Okänt"}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Deadline</div>
                 <div class="detail-value">{proc.get("deadline") or "Ej angiven"}</div>
             </div>
             <div class="detail-row">
-                <div class="detail-label">Uppskattat varde</div>
+                <div class="detail-label">Uppskattat värde</div>
                 <div class="detail-value">{proc.get("estimated_value") or "Ej angivet"} {proc.get("currency") or ""}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Status</div>
-                <div class="detail-value">{proc.get("status") or "Okand"}</div>
+                <div class="detail-value">{proc.get("status") or "Okänd"}</div>
             </div>
             <div class="detail-row" style="border-bottom:none">
-                <div class="detail-label">Lank</div>
+                <div class="detail-label">Länk</div>
                 <div class="detail-value">{url_html}</div>
             </div>
         </div>
@@ -657,11 +657,11 @@ elif page == "Detaljvy":
 # ============================================================
 # INSTALLNINGAR
 # ============================================================
-elif page == "Installningar":
+elif page == "Inställningar":
     st.markdown(
         '<div class="top-bar">'
         '  <div>'
-        '    <div class="top-bar-title">Installningar</div>'
+        '    <div class="top-bar-title">Inställningar</div>'
         '    <div class="top-bar-sub">Scoring-vikter och konfiguration</div>'
         '  </div>'
         '</div>',
@@ -681,7 +681,7 @@ elif page == "Installningar":
             unsafe_allow_html=True,
         )
 
-    render_keyword_section("Hog vikt (20p)", HIGH_WEIGHT_KEYWORDS, "var(--orange-400)")
+    render_keyword_section("Hög vikt (20p)", HIGH_WEIGHT_KEYWORDS, "var(--orange-400)")
     render_keyword_section("Medel vikt (10p)", MEDIUM_WEIGHT_KEYWORDS, "var(--yellow-500)")
     render_keyword_section("Bas vikt (5p)", BASE_WEIGHT_KEYWORDS, "var(--text-secondary)")
 
@@ -691,7 +691,7 @@ elif page == "Installningar":
     )
     st.markdown(
         f'<div class="detail-panel">'
-        f'<div style="font-weight:600;font-size:14px;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px">Kanda kopare (bonus +10p)</div>'
+        f'<div style="font-weight:600;font-size:14px;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px">Kända köpare (bonus +10p)</div>'
         f'<div>{buyers_html}</div>'
         f'</div>',
         unsafe_allow_html=True,
@@ -700,7 +700,7 @@ elif page == "Installningar":
     st.markdown("---")
     st.markdown(
         '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">'
-        'Redigera <code>scorer.py</code> och kor <code>python run_scrapers.py --score-only</code> for att uppdatera scores.'
+        'Redigera <code>scorer.py</code> och kör <code>python run_scrapers.py --score-only</code> för att uppdatera scores.'
         '</div>',
         unsafe_allow_html=True,
     )

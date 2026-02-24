@@ -1,7 +1,7 @@
-"""TED (Tenders Electronic Daily) API scraper.
+"""TED (Tenders Electronic Daily) API-scraper.
 
-Uses the free v3 search API — no authentication required for published notices.
-Filters for Swedish transport procurements (CPV 60*).
+Använder det fria v3 sök-API:et — ingen autentisering krävs för publicerade notices.
+Filtrerar på svenska transport-upphandlingar (CPV 60*).
 """
 
 from __future__ import annotations
@@ -11,26 +11,23 @@ from .base import BaseScraper
 
 SEARCH_URL = "https://api.ted.europa.eu/v3/notices/search"
 
-# Query: Swedish notices with transport CPV codes
-QUERY_PARAMS = {
-    "query": "country=SWE AND cpv=60*",
-    "fields": [
-        "notice-id",
-        "title",
-        "buyer-name",
-        "place-of-performance",
-        "cpv-code",
-        "procedure-type",
-        "publication-date",
-        "deadline-receipt-tenders",
-        "estimated-total-value",
-        "notice-url",
-        "description",
-    ],
-    "pageSize": 50,
-    "page": 1,
-    "scope": "ALL",
-}
+# Fält att hämta från API:et
+FIELDS = [
+    "notice-identifier",
+    "notice-title",
+    "description-proc",
+    "description-lot",
+    "organisation-name-buyer",
+    "classification-cpv",
+    "publication-date",
+    "deadline-receipt-tender-date-lot",
+    "estimated-value-proc",
+    "estimated-value-cur-proc",
+]
+
+# Antal resultat per sida (API default är 10)
+PAGE_SIZE = 50
+MAX_PAGES = 5
 
 
 class TedScraper(BaseScraper):
@@ -39,13 +36,18 @@ class TedScraper(BaseScraper):
     def fetch(self) -> list[dict]:
         results = []
         page = 1
-        while True:
-            payload = {**QUERY_PARAMS, "page": page}
+        while page <= MAX_PAGES:
+            payload = {
+                "query": f"CY=SWE AND classification-cpv=60*",
+                "fields": FIELDS,
+                "limit": PAGE_SIZE,
+                "page": page,
+            }
             try:
                 resp = httpx.post(SEARCH_URL, json=payload, timeout=30)
                 resp.raise_for_status()
             except httpx.HTTPError as e:
-                print(f"[TED] HTTP error on page {page}: {e}")
+                print(f"[TED] HTTP-fel på sida {page}: {e}")
                 break
 
             data = resp.json()
@@ -56,64 +58,78 @@ class TedScraper(BaseScraper):
             for notice in notices:
                 results.append(self._normalize(notice))
 
-            # Stop if we've fetched all pages
-            total_pages = data.get("totalPages", 1)
-            if page >= total_pages:
+            # API returnerar exakt limit antal om det finns fler
+            if len(notices) < PAGE_SIZE:
                 break
             page += 1
 
-        print(f"[TED] Fetched {len(results)} notices")
+        print(f"[TED] Hämtade {len(results)} upphandlingar")
         return results
 
     def _normalize(self, notice: dict) -> dict:
-        """Map TED API fields to our schema."""
-        # TED v3 returns fields in various formats; handle flexibly
-        title_data = notice.get("title", "")
-        if isinstance(title_data, dict):
-            title = title_data.get("sv") or title_data.get("en") or str(title_data)
-        elif isinstance(title_data, list) and title_data:
-            title = str(title_data[0])
-        else:
-            title = str(title_data) if title_data else "Utan titel"
+        """Mappa TED API-fält till vårt schema."""
+        title = self._extract_text(notice.get("notice-title"), "Utan titel")
+        buyer = self._extract_text(notice.get("organisation-name-buyer"))
+        desc = self._extract_text(notice.get("description-proc")) or self._extract_text(notice.get("description-lot"))
 
-        buyer = notice.get("buyer-name", "")
-        if isinstance(buyer, list) and buyer:
-            buyer = buyer[0]
-        if isinstance(buyer, dict):
-            buyer = buyer.get("sv") or buyer.get("en") or str(buyer)
+        # Extrahera geografi från titeln (format: "Sverige-Malmö: Beskrivning")
+        geography = "Sverige"
+        if title.startswith("Sverige-"):
+            parts = title.split(":", 1)
+            if parts:
+                geography = parts[0].replace("Sverige-", "").strip()
 
-        cpv = notice.get("cpv-code", "")
+        cpv = notice.get("classification-cpv", [])
         if isinstance(cpv, list):
             cpv = ",".join(str(c) for c in cpv)
 
-        desc = notice.get("description", "")
-        if isinstance(desc, dict):
-            desc = desc.get("sv") or desc.get("en") or str(desc)
-        elif isinstance(desc, list) and desc:
-            desc = str(desc[0])
+        pub_number = notice.get("publication-number", "")
 
-        place = notice.get("place-of-performance", "")
-        if isinstance(place, list) and place:
-            place = place[0]
-        if isinstance(place, dict):
-            place = place.get("sv") or place.get("en") or str(place)
+        # Bygg URL från publication-number
+        url_links = notice.get("links", {}).get("html", {})
+        url = url_links.get("SWE") or url_links.get("ENG") or f"https://ted.europa.eu/sv/notice/-/detail/{pub_number}"
+
+        deadline = notice.get("deadline-receipt-tender-date-lot")
+        if isinstance(deadline, list) and deadline:
+            deadline = deadline[0]
+
+        est_value = notice.get("estimated-value-proc")
+        est_cur = notice.get("estimated-value-cur-proc")
 
         return {
             "source": "ted",
-            "source_id": str(notice.get("notice-id", "")),
+            "source_id": pub_number,
             "title": title,
-            "buyer": str(buyer) if buyer else None,
-            "geography": str(place) if place else None,
+            "buyer": buyer,
+            "geography": geography,
             "cpv_codes": str(cpv) if cpv else None,
-            "procedure_type": notice.get("procedure-type"),
-            "published_date": notice.get("publication-date"),
-            "deadline": notice.get("deadline-receipt-tenders"),
-            "estimated_value": self._parse_value(notice.get("estimated-total-value")),
-            "currency": "EUR",
+            "procedure_type": None,
+            "published_date": notice.get("publication-date", "")[:10] if notice.get("publication-date") else None,
+            "deadline": str(deadline)[:10] if deadline else None,
+            "estimated_value": self._parse_value(est_value),
+            "currency": str(est_cur) if est_cur else "EUR",
             "status": "published",
-            "url": notice.get("notice-url") or f"https://ted.europa.eu/en/notice/-/detail/{notice.get('notice-id', '')}",
+            "url": url,
             "description": str(desc)[:2000] if desc else None,
         }
+
+    @staticmethod
+    def _extract_text(val, default: str = "") -> str:
+        """Extrahera text från TED:s flerspråkiga fält (föredrar svenska)."""
+        if val is None:
+            return default
+        if isinstance(val, str):
+            return val
+        if isinstance(val, dict):
+            return val.get("swe") or val.get("SWE") or val.get("eng") or val.get("ENG") or next(iter(val.values()), default)
+        if isinstance(val, list):
+            if not val:
+                return default
+            first = val[0]
+            if isinstance(first, dict):
+                return TedScraper._extract_text(first, default)
+            return str(first)
+        return str(val) if val else default
 
     @staticmethod
     def _parse_value(val) -> float | None:
@@ -128,4 +144,6 @@ class TedScraper(BaseScraper):
                 return None
         if isinstance(val, dict):
             return TedScraper._parse_value(val.get("value"))
+        if isinstance(val, list) and val:
+            return TedScraper._parse_value(val[0])
         return None
