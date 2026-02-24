@@ -1,17 +1,17 @@
 """TED (Tenders Electronic Daily) API-scraper.
 
 Använder det fria v3 sök-API:et — ingen autentisering krävs för publicerade notices.
-Filtrerar på svenska transport-upphandlingar (CPV 60*).
+Kör flera sökningar för att fånga svenska upphandlingar relevanta för kollektivtrafik-IT.
 """
 
 from __future__ import annotations
 
+import time
 import httpx
 from .base import BaseScraper
 
 SEARCH_URL = "https://api.ted.europa.eu/v3/notices/search"
 
-# Fält att hämta från API:et
 FIELDS = [
     "notice-identifier",
     "notice-title",
@@ -25,30 +25,57 @@ FIELDS = [
     "estimated-value-cur-proc",
 ]
 
-# Antal resultat per sida (API default är 10)
+# Flera sökfrågor för att fånga relevanta upphandlingar
+QUERIES = [
+    # Transport-CPV senaste 2 åren
+    "CY=SWE AND classification-cpv=60* AND publication-date>20240101",
+    # IT-system för transport
+    "CY=SWE AND classification-cpv=48* AND publication-date>20240101",
+    # Programvarutjänster
+    "CY=SWE AND classification-cpv=72* AND publication-date>20240101",
+]
+
 PAGE_SIZE = 50
-MAX_PAGES = 5
+MAX_PAGES = 4
 
 
 class TedScraper(BaseScraper):
     name = "ted"
 
     def fetch(self) -> list[dict]:
+        seen_ids: set[str] = set()
+        results = []
+
+        for query in QUERIES:
+            query_results = self._fetch_query(query, seen_ids)
+            results.extend(query_results)
+
+        print(f"[TED] Hämtade {len(results)} upphandlingar totalt")
+        return results
+
+    def _fetch_query(self, query: str, seen_ids: set[str]) -> list[dict]:
         results = []
         page = 1
+
         while page <= MAX_PAGES:
             payload = {
-                "query": f"CY=SWE AND classification-cpv=60*",
+                "query": query,
                 "fields": FIELDS,
                 "limit": PAGE_SIZE,
                 "page": page,
             }
             try:
                 resp = httpx.post(SEARCH_URL, json=payload, timeout=30)
+                if resp.status_code == 429:
+                    print("[TED] Rate limit — väntar 5s...")
+                    time.sleep(5)
+                    resp = httpx.post(SEARCH_URL, json=payload, timeout=30)
                 resp.raise_for_status()
             except httpx.HTTPError as e:
-                print(f"[TED] HTTP-fel på sida {page}: {e}")
+                print(f"[TED] HTTP-fel: {e}")
                 break
+
+            time.sleep(0.5)  # Undvik rate limiting
 
             data = resp.json()
             notices = data.get("notices", [])
@@ -56,25 +83,38 @@ class TedScraper(BaseScraper):
                 break
 
             for notice in notices:
+                pub_nr = notice.get("publication-number", "")
+                if pub_nr in seen_ids:
+                    continue
+                seen_ids.add(pub_nr)
                 results.append(self._normalize(notice))
 
-            # API returnerar exakt limit antal om det finns fler
             if len(notices) < PAGE_SIZE:
                 break
             page += 1
 
-        print(f"[TED] Hämtade {len(results)} upphandlingar")
         return results
 
     def _normalize(self, notice: dict) -> dict:
         """Mappa TED API-fält till vårt schema."""
         title = self._extract_text(notice.get("notice-title"), "Utan titel")
         buyer = self._extract_text(notice.get("organisation-name-buyer"))
-        desc = self._extract_text(notice.get("description-proc")) or self._extract_text(notice.get("description-lot"))
+        desc = (
+            self._extract_text(notice.get("description-proc"))
+            or self._extract_text(notice.get("description-lot"))
+        )
 
         # Extrahera geografi från titeln (format: "Sverige-Malmö: Beskrivning")
         geography = "Sverige"
-        if title.startswith("Sverige-"):
+        title_clean = title
+        if "–" in title:
+            # Nyare format: "Sverige – Kollektivtrafik – ..."
+            parts = title.split("–")
+            if len(parts) >= 2:
+                geography = parts[0].replace("Sverige", "").strip().strip("–").strip()
+                if not geography:
+                    geography = "Sverige"
+        elif title.startswith("Sverige-"):
             parts = title.split(":", 1)
             if parts:
                 geography = parts[0].replace("Sverige-", "").strip()
@@ -85,9 +125,12 @@ class TedScraper(BaseScraper):
 
         pub_number = notice.get("publication-number", "")
 
-        # Bygg URL från publication-number
         url_links = notice.get("links", {}).get("html", {})
-        url = url_links.get("SWE") or url_links.get("ENG") or f"https://ted.europa.eu/sv/notice/-/detail/{pub_number}"
+        url = (
+            url_links.get("SWE")
+            or url_links.get("ENG")
+            or f"https://ted.europa.eu/sv/notice/-/detail/{pub_number}"
+        )
 
         deadline = notice.get("deadline-receipt-tender-date-lot")
         if isinstance(deadline, list) and deadline:
@@ -99,15 +142,15 @@ class TedScraper(BaseScraper):
         return {
             "source": "ted",
             "source_id": pub_number,
-            "title": title,
-            "buyer": buyer,
+            "title": title_clean,
+            "buyer": buyer if buyer else None,
             "geography": geography,
             "cpv_codes": str(cpv) if cpv else None,
             "procedure_type": None,
             "published_date": notice.get("publication-date", "")[:10] if notice.get("publication-date") else None,
             "deadline": str(deadline)[:10] if deadline else None,
             "estimated_value": self._parse_value(est_value),
-            "currency": str(est_cur) if est_cur else "EUR",
+            "currency": str(est_cur) if est_cur else "SEK",
             "status": "published",
             "url": url,
             "description": str(desc)[:2000] if desc else None,
@@ -121,7 +164,13 @@ class TedScraper(BaseScraper):
         if isinstance(val, str):
             return val
         if isinstance(val, dict):
-            return val.get("swe") or val.get("SWE") or val.get("eng") or val.get("ENG") or next(iter(val.values()), default)
+            # Värdet kan vara en sträng eller en lista av strängar
+            raw = val.get("swe") or val.get("SWE") or val.get("eng") or val.get("ENG")
+            if raw is None:
+                raw = next(iter(val.values()), default)
+            if isinstance(raw, list):
+                return " ".join(str(x) for x in raw) if raw else default
+            return str(raw) if raw else default
         if isinstance(val, list):
             if not val:
                 return default

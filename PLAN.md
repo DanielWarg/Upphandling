@@ -130,6 +130,28 @@ Max score: 100 (cappat)
 | 6 | Testning, edge cases, felhantering |
 | 7 | Dokumentation, deploy-instruktioner, demo |
 
+## Kommande features (v2)
+
+### Historisk analys av avslutade upphandlingar
+- Scrapa avslutade/tilldelade upphandlingar från TED (resultat-notices)
+- Lagra vinnare, tilldelat värde, antal anbud
+- Analysvy: Varför vann vinnaren? Pris vs kvalitet? Tidigare erfarenhet?
+- Mönsterigenkänning: Vilka leverantörer vinner i vilka regioner/segment?
+- Insikter inför kommande liknande upphandlingar
+
+### AI-drivet upphandlingsstöd
+- **Kravanalys:** AI läser kravställningen och sammanfattar nyckelkrav
+- **Matchningsanalys:** Hur matchar Hogias produkter mot kraven? Gap-analys
+- **Prisstrategi:** AI-stöd för prissättning baserat på historiska tilldelningar
+- **Anbudshjälp:** Förslag på win themes, differentiering, compliance-checklista
+- LLM-integration (Claude API) för analys av upphandlingsdokument
+
+### Djuplänkar och referensinformation
+- Klickbara länkar direkt till TED/Mercell/KommersAnnons-originalet
+- PDF-nedladdning av upphandlingsdokument där tillgängligt
+- Koppling till leverantörsregister och tidigare tilldelningar
+- Tidslinje per upphandling: publicerad → Q&A → deadline → tilldelning
+
 ## Verifiering
 
 1. Kor `python run_scrapers.py` - ska hamta upphandlingar fran alla kallor
