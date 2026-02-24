@@ -110,11 +110,12 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
 }
 
 /* --- Kanban --- */
-.kb { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 12px; }
+.kb { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding-bottom: 12px; }
 .kb-col {
-    flex: 1; min-width: 320px; background: var(--bg-1);
+    background: var(--bg-1);
     border: 1px solid var(--border); border-radius: var(--r);
-    display: flex; flex-direction: column; max-height: 78vh;
+    display: flex; flex-direction: column;
+    height: calc(100vh - 260px); min-height: 400px;
 }
 .kb-col-head {
     padding: 14px 18px; border-bottom: 1px solid var(--border-subtle);
@@ -125,12 +126,20 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
     background: var(--bg-3); border-radius: 20px; padding: 2px 10px;
     font-size: 11px; font-weight: 700; color: var(--text-2);
 }
-.kb-cards { padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.kb-cards {
+    padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px;
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+}
+.kb-cards::-webkit-scrollbar { width: 6px; }
+.kb-cards::-webkit-scrollbar-track { background: transparent; }
+.kb-cards::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+.kb-cards::-webkit-scrollbar-thumb:hover { background: var(--border); }
 
 /* --- Cards --- */
 .card {
     background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm);
-    padding: 14px 16px; transition: all 0.2s cubic-bezier(.4,0,.2,1); position: relative; overflow: hidden;
+    padding: 12px 14px; transition: all 0.2s cubic-bezier(.4,0,.2,1); position: relative; overflow: hidden;
+    flex-shrink: 0;
 }
 .card::before {
     content: ''; position: absolute; top: 0; left: 0; bottom: 0; width: 3px;
