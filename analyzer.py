@@ -395,6 +395,95 @@ def _parse_prefilter_json(raw_text: str) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Ollama — local AI prefilter using OpenAI-compatible API
+# ---------------------------------------------------------------------------
+
+def _call_ollama(system_prompt: str, user_msg: str, model: str = "qwen3:14b") -> str | None:
+    """Call local Ollama model. Returns response text or None."""
+    try:
+        resp = httpx.post(
+            "http://localhost:11434/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                "temperature": 0.1,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error("Ollama error: %s", e)
+        return None
+
+
+def ollama_prefilter_procurement(proc_id: int, model: str = "qwen3:14b") -> dict | None:
+    """Run AI relevance check on a single procurement using local Ollama. Returns {'relevant': bool, 'reasoning': str} or None."""
+    proc = get_procurement(proc_id)
+    if not proc:
+        return None
+
+    title = proc.get("title") or ""
+    buyer = proc.get("buyer") or ""
+    cpv = proc.get("cpv_codes") or ""
+    desc = (proc.get("description") or "")[:300]
+
+    user_msg = f"Titel: {title}\nKöpare: {buyer}\nCPV: {cpv}\nBeskrivning: {desc}"
+
+    raw_text = _call_ollama(PREFILTER_SYSTEM_PROMPT, user_msg, model=model)
+    if raw_text is None:
+        return None
+
+    parsed = _parse_prefilter_json(raw_text)
+    if parsed is None:
+        logger.warning("Ollama prefilter JSON parse failed for proc %d: %s", proc_id, raw_text[:200])
+        return None
+
+    relevance = "relevant" if parsed["relevant"] else "irrelevant"
+    update_ai_relevance(proc_id, relevance, parsed["reasoning"])
+
+    return parsed
+
+
+def ollama_prefilter_all(model: str = "qwen3:14b", force: bool = False, min_score: int = 1) -> int:
+    """Run AI prefilter on procurements using local Ollama.
+
+    Only processes procurements with score >= min_score (default 1, i.e. those
+    that passed the sector gate). No sleep between calls (local model).
+    Skips already-assessed procurements unless force=True.
+    Returns number of procurements filtered as irrelevant.
+    """
+    procs = get_all_procurements()
+    filtered = 0
+    checked = 0
+    skipped_low = 0
+
+    for p in procs:
+        # Skip procurements that didn't pass sector gate
+        score = p.get("score") or 0
+        if score < min_score:
+            skipped_low += 1
+            continue
+
+        # Skip already assessed unless force
+        if not force and p.get("ai_relevance") is not None:
+            continue
+
+        result = ollama_prefilter_procurement(p["id"], model=model)
+        if result is not None:
+            checked += 1
+            if not result["relevant"]:
+                filtered += 1
+
+    logger.info("Ollama prefilter: checked %d, filtered %d as irrelevant, skipped %d (low score)", checked, filtered, skipped_low)
+    print(f"Ollama-prefilter: {checked} bedömda, {filtered} filtrerade som irrelevanta, {skipped_low} hoppade över (score < {min_score})")
+    return filtered
+
+
 def ai_prefilter_procurement(proc_id: int) -> dict | None:
     """Run AI relevance check on a single procurement. Returns {'relevant': bool, 'reasoning': str} or None."""
     proc = get_procurement(proc_id)

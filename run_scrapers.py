@@ -2,14 +2,13 @@
 """CLI-skript för att köra alla scrapers, lagra resultat och scora leads."""
 
 import argparse
-import os
 import sys
 from db import init_db, upsert_procurement, get_all_procurements, update_score
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
 
 
-def run(sources: list[str] | None = None, skip_scoring: bool = False):
+def run(sources: list[str] | None = None, skip_scoring: bool = False, ollama_model: str = "qwen3:14b"):
     """Kör scrapers och scora resultat."""
     init_db()
 
@@ -39,7 +38,7 @@ def run(sources: list[str] | None = None, skip_scoring: bool = False):
         print("\nScorar alla upphandlingar...")
         score_all()
 
-    run_ai_prefilter()
+    run_ai_prefilter(ollama_model=ollama_model)
 
     print("\nKlart!")
 
@@ -59,18 +58,11 @@ def score_all():
     print(f"Scorade {len(procurements)} upphandlingar")
 
 
-def run_ai_prefilter():
-    """Run AI prefilter on scored procurements. Skips if no API key."""
-    from dotenv import load_dotenv
-    load_dotenv()
-
-    if not os.getenv("GEMINI_API_KEY"):
-        print("\nGEMINI_API_KEY saknas — hoppar över AI-prefilter")
-        return
-
-    print("\nKör AI-prefilter på upphandlingar med score > 0...")
-    from analyzer import ai_prefilter_all
-    ai_prefilter_all(threshold=1)
+def run_ai_prefilter(ollama_model: str = "qwen3:14b"):
+    """Run local AI prefilter on procurements that passed sector gate (score > 0)."""
+    print(f"\nKör lokal AI-prefilter (Ollama, modell: {ollama_model}) på gate-passerade upphandlingar...")
+    from analyzer import ollama_prefilter_all
+    ollama_prefilter_all(model=ollama_model, min_score=1)
 
 
 def main():
@@ -91,13 +83,18 @@ def main():
         action="store_true",
         help="Hoppa över scoring efter scraping",
     )
+    parser.add_argument(
+        "--ollama-model",
+        default="qwen3:14b",
+        help="Ollama-modell för AI-prefilter (standard: qwen3:14b)",
+    )
     args = parser.parse_args()
 
     if args.score_only:
         score_all()
-        run_ai_prefilter()
+        run_ai_prefilter(ollama_model=args.ollama_model)
     else:
-        run(sources=args.sources, skip_scoring=args.skip_scoring)
+        run(sources=args.sources, skip_scoring=args.skip_scoring, ollama_model=args.ollama_model)
 
 
 if __name__ == "__main__":

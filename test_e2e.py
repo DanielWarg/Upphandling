@@ -145,6 +145,32 @@ class TestDatabase:
         results = search_procurements(geography="Stockholm")
         assert len(results) == 1
 
+    def test_search_by_ai_relevance(self, use_test_db):
+        from db import upsert_procurement, update_ai_relevance, search_procurements
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        upsert_procurement(SAMPLE_LOW_SCORE)
+        update_ai_relevance(1, "relevant", "IT-system")
+        update_ai_relevance(2, "irrelevant", "Kontorsmaterial")
+
+        relevant = search_procurements(ai_relevance="relevant")
+        assert len(relevant) == 1
+        assert relevant[0]["source_id"] == "TED-001"
+
+        irrelevant = search_procurements(ai_relevance="irrelevant")
+        assert len(irrelevant) == 1
+        assert irrelevant[0]["source_id"] == "KOM-003"
+
+    def test_search_by_ai_relevance_unassessed(self, use_test_db):
+        from db import upsert_procurement, update_ai_relevance, search_procurements
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        upsert_procurement(SAMPLE_LOW_SCORE)
+        update_ai_relevance(1, "relevant", "IT-system")
+        # proc 2 has no ai_relevance set
+
+        unassessed = search_procurements(ai_relevance="unassessed")
+        assert len(unassessed) == 1
+        assert unassessed[0]["source_id"] == "KOM-003"
+
     def test_search_by_score_range(self, use_test_db):
         from db import upsert_procurement, update_score, search_procurements
         upsert_procurement(SAMPLE_HIGH_SCORE)
@@ -237,6 +263,112 @@ class TestScoring:
             cpv_codes="48000000",
         )
         assert score > 0
+
+
+# ---------------------------------------------------------------------------
+# 2b. Sector gate
+# ---------------------------------------------------------------------------
+
+class TestSectorGate:
+    def test_sector_gate_blocks_medical(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="EKG-system för landstinget",
+            description="Medicinsk programvara för kardiologi",
+        )
+        assert not passed
+        assert "Medicinsk" in reason
+
+    def test_sector_gate_blocks_va(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="VA-databas för reningsverk",
+            description="System för avloppshantering",
+        )
+        assert not passed
+        assert "VA/vatten" in reason
+
+    def test_sector_gate_blocks_social(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="IT-system för hemtjänst",
+            description="Digitalt stöd för omsorg",
+        )
+        assert not passed
+        assert "Socialtjänst" in reason
+
+    def test_sector_gate_blocks_construction(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="Totalentreprenad vägarbeten",
+            description="Asfaltering av vägsträcka",
+        )
+        assert not passed
+        assert "Bygg" in reason
+
+    def test_sector_gate_blocks_generic_it(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="Rekryteringssystem",
+            description="Webbaserat system för personalrekrytering",
+        )
+        assert not passed
+        # Blocked either by sector or missing transport signal
+        assert not passed
+
+    def test_sector_gate_passes_transport_it(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="Realtidssystem för kollektivtrafik",
+            description="Passagerarinformation och trafikledning",
+            buyer="Västtrafik",
+        )
+        assert passed
+        assert "Passerade" in reason
+
+    def test_sector_gate_requires_transport_signal(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="IT-plattform och systemlösning",
+            description="Leverans av molntjänst och dataplattform",
+        )
+        assert not passed
+        assert "transportsignal" in reason.lower()
+
+    def test_sector_gate_cpv60_counts_as_transport(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="IT-system för transportplanering",
+            description="Systemlösning för trafik",
+            cpv_codes="60100000",
+        )
+        assert passed
+
+    def test_sector_gate_known_buyer_counts_as_transport(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="Nytt informationssystem",
+            description="Plattform för trafikdata",
+            buyer="Skånetrafiken",
+        )
+        assert passed
+
+    def test_scoring_returns_zero_when_gate_fails(self):
+        from scorer import score_procurement
+        score, rationale = score_procurement(
+            title="EKG-system",
+            description="Medicinsk programvara för kardiologisk övervakning",
+        )
+        assert score == 0
+        assert "Medicinsk" in rationale
+
+    def test_sector_gate_bibliotek_exception_with_transport(self):
+        from scorer import sector_gate
+        passed, reason = sector_gate(
+            title="Transportbibliotek för kollektivtrafik",
+            description="Databibliotek med realtidsinformation",
+        )
+        assert passed
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +691,304 @@ class TestAiPrefilter:
 
 
 # ---------------------------------------------------------------------------
-# 8. Streamlit app import check
+# 8. Ollama prefilter
+# ---------------------------------------------------------------------------
+
+class TestOllamaPrefilter:
+    def test_call_ollama_success(self):
+        """_call_ollama should return response text on success."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": '{"relevant": true, "reasoning": "test"}'}}]
+        }
+
+        with patch("analyzer.httpx.post", return_value=mock_resp):
+            from analyzer import _call_ollama
+            result = _call_ollama("system", "user", model="qwen3:14b")
+            assert result == '{"relevant": true, "reasoning": "test"}'
+
+    def test_call_ollama_failure_returns_none(self):
+        """_call_ollama should return None on connection error."""
+        with patch("analyzer.httpx.post", side_effect=Exception("Connection refused")):
+            from analyzer import _call_ollama
+            result = _call_ollama("system", "user")
+            assert result is None
+
+    def test_ollama_prefilter_procurement_relevant(self, use_test_db):
+        """ollama_prefilter_procurement should mark relevant procurement."""
+        from db import upsert_procurement, get_procurement
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": '{"relevant": true, "reasoning": "Kollektivtrafik IT-system"}'}}]
+        }
+
+        with patch("analyzer.httpx.post", return_value=mock_resp):
+            from analyzer import ollama_prefilter_procurement
+            result = ollama_prefilter_procurement(1)
+            assert result is not None
+            assert result["relevant"] is True
+            proc = get_procurement(1)
+            assert proc["ai_relevance"] == "relevant"
+
+    def test_ollama_prefilter_procurement_irrelevant(self, use_test_db):
+        """ollama_prefilter_procurement should mark irrelevant procurement."""
+        from db import upsert_procurement, get_procurement
+        upsert_procurement(SAMPLE_LOW_SCORE)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": '{"relevant": false, "reasoning": "Kontorsmaterial"}'}}]
+        }
+
+        with patch("analyzer.httpx.post", return_value=mock_resp):
+            from analyzer import ollama_prefilter_procurement
+            result = ollama_prefilter_procurement(1)
+            assert result is not None
+            assert result["relevant"] is False
+            proc = get_procurement(1)
+            assert proc["ai_relevance"] == "irrelevant"
+
+    def test_ollama_prefilter_all_processes_scored(self, use_test_db):
+        """ollama_prefilter_all should only process procurements with score >= min_score."""
+        from db import upsert_procurement, update_score
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        upsert_procurement(SAMPLE_LOW_SCORE)
+        update_score(1, 50, "hög")
+        update_score(2, 0, "gate blockerad")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": '{"relevant": false, "reasoning": "Inte relevant"}'}}]
+        }
+
+        with patch("analyzer.httpx.post", return_value=mock_resp):
+            from analyzer import ollama_prefilter_all
+            filtered = ollama_prefilter_all(model="qwen3:14b")
+            assert filtered == 1  # Only the scored one should be processed
+
+    def test_ollama_prefilter_all_skips_assessed(self, use_test_db):
+        """ollama_prefilter_all should skip already-assessed procurements."""
+        from db import upsert_procurement, update_ai_relevance
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_ai_relevance(1, "relevant", "Redan bedömd")
+
+        with patch("analyzer.httpx.post") as mock_post:
+            from analyzer import ollama_prefilter_all
+            ollama_prefilter_all(model="qwen3:14b", force=False)
+            mock_post.assert_not_called()
+
+    def test_ollama_prefilter_all_force_reassess(self, use_test_db):
+        """ollama_prefilter_all with force=True should reassess."""
+        from db import upsert_procurement, update_score, update_ai_relevance
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_score(1, 50, "hög")
+        update_ai_relevance(1, "relevant", "Redan bedömd")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": '{"relevant": false, "reasoning": "Omvärdering"}'}}]
+        }
+
+        with patch("analyzer.httpx.post", return_value=mock_resp):
+            from analyzer import ollama_prefilter_all
+            filtered = ollama_prefilter_all(model="qwen3:14b", force=True)
+            assert filtered == 1
+            from db import get_procurement
+            proc = get_procurement(1)
+            assert proc["ai_relevance"] == "irrelevant"
+
+
+# ---------------------------------------------------------------------------
+# 9. Streamlit app import check
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 9. KommersAnnons parser
+# ---------------------------------------------------------------------------
+
+KOMMERS_LISTING_HTML = """
+<div class="row mt-4 mb-4 align-items-center">
+  <div class="col-md-2 text-center d-none d-md-block">
+    <img alt="Procuring entity image" src="/Images/ProcuringEntities/logo.jpg" />
+  </div>
+  <div class="col-md-8 text-break">
+    <h4 class="mb-0">
+      <a href="/Notices/TenderNotice/19817">
+        KOM-418411 - Förbigångsspår Lekarekulle
+      </a>
+    </h4>
+    <div><small>Datum då annonsen skickades för publicering 2026-01-28</small></div>
+    <div><small>NUTS: Västsverige, Hallands län</small></div>
+    <div><small>CPV: Byggtekniska konsulttjänster</small></div>
+    <div><p>Upphandling av projektering för Järnvägsplan.</p></div>
+  </div>
+  <div class="col-md-2 mb-3 mb-sm-0">
+    <div class="text-center">
+      <h4 class="p-0 m-0">15</h4>
+      dagar kvar
+    </div>
+  </div>
+</div>
+"""
+
+
+class TestKommersScraper:
+    def test_parse_notice_row(self):
+        from scrapers.kommers import KommersScraper
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(KOMMERS_LISTING_HTML, "html.parser")
+        row = soup.select_one("div.row.mt-4.mb-4")
+        scraper = KommersScraper()
+        result = scraper._parse_notice_row(row)
+        assert result is not None
+        assert result["source"] == "kommers"
+        assert result["source_id"] == "KOM-19817"
+        assert result["title"] == "Förbigångsspår Lekarekulle"
+        assert result["published_date"] == "2026-01-28"
+        assert result["geography"] == "Västsverige, Hallands län"
+        assert result["cpv_codes"] == "Byggtekniska konsulttjänster"
+        assert "projektering" in result["description"]
+        assert result["url"] == "https://www.kommersannons.se/Notices/TenderNotice/19817"
+
+    def test_parse_listing_multiple(self):
+        from scrapers.kommers import KommersScraper
+        double_html = KOMMERS_LISTING_HTML * 2
+        scraper = KommersScraper()
+        results = scraper._parse_listing(double_html)
+        assert len(results) == 2
+
+    def test_parse_listing_empty(self):
+        from scrapers.kommers import KommersScraper
+        scraper = KommersScraper()
+        results = scraper._parse_listing("<html><body></body></html>")
+        assert results == []
+
+    def test_parse_row_no_link_returns_none(self):
+        from scrapers.kommers import KommersScraper
+        from bs4 import BeautifulSoup
+        html = '<div class="row mt-4 mb-4"><div class="col-md-8"><h4>No link</h4></div></div>'
+        soup = BeautifulSoup(html, "html.parser")
+        row = soup.select_one("div.row.mt-4.mb-4")
+        scraper = KommersScraper()
+        assert scraper._parse_notice_row(row) is None
+
+
+# ---------------------------------------------------------------------------
+# 10. e-Avrop parser
+# ---------------------------------------------------------------------------
+
+EAVROP_TABLE_HTML = """
+<table id="ctl00_mainContent_tenderGridView">
+  <tr>
+    <th>Rubrik</th><th>Publicerad</th><th>Organisation</th>
+    <th>Område</th><th>Anbud-/Ansökningsdag</th>
+  </tr>
+  <tr>
+    <td><a href="/upphandling/visa/upphandling.aspx?id=69521">Måleriarbeten</a></td>
+    <td>2026-01-14</td>
+    <td>Region Dalarna</td>
+    <td>45440000</td>
+    <td>2026-02-25</td>
+  </tr>
+  <tr>
+    <td><a href="/upphandling/visa/upphandling.aspx?id=70000">IT-konsulter</a></td>
+    <td>2026-01-20</td>
+    <td>Skånetrafiken</td>
+    <td>72000000</td>
+    <td>2026-03-15</td>
+  </tr>
+</table>
+"""
+
+
+class TestEAvropScraper:
+    def test_parse_listing_row(self):
+        from scrapers.eavrop import EAvropScraper
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(EAVROP_TABLE_HTML, "html.parser")
+        rows = soup.select("tr")
+        scraper = EAvropScraper()
+        # First row is header, second is data
+        result = scraper._parse_listing_row(rows[1])
+        assert result is not None
+        assert result["source"] == "eavrop"
+        assert result["source_id"] == "EA-69521"
+        assert result["title"] == "Måleriarbeten"
+        assert result["buyer"] == "Region Dalarna"
+        assert result["cpv_codes"] == "45440000"
+        assert result["published_date"] == "2026-01-14"
+        assert result["deadline"] == "2026-02-25"
+        assert "69521" in result["url"]
+
+    def test_parse_listing_finds_all_rows(self):
+        from scrapers.eavrop import EAvropScraper
+        scraper = EAvropScraper()
+        results = scraper._parse_listing(EAVROP_TABLE_HTML)
+        assert len(results) == 2
+
+    def test_parse_listing_skips_header(self):
+        from scrapers.eavrop import EAvropScraper
+        scraper = EAvropScraper()
+        results = scraper._parse_listing(EAVROP_TABLE_HTML)
+        # None of the results should have "Rubrik" as title
+        assert all(r["title"] != "Rubrik" for r in results)
+
+    def test_parse_listing_empty_table(self):
+        from scrapers.eavrop import EAvropScraper
+        scraper = EAvropScraper()
+        results = scraper._parse_listing("<html><body></body></html>")
+        assert results == []
+
+    def test_is_potentially_relevant_matches(self):
+        from scrapers.eavrop import EAvropScraper
+        proc = {"title": "Realtidsinformation för kollektivtrafik", "cpv_codes": "72000000", "buyer": "Västtrafik"}
+        assert EAvropScraper._is_potentially_relevant(proc) is True
+
+    def test_is_potentially_relevant_no_match(self):
+        from scrapers.eavrop import EAvropScraper
+        proc = {"title": "Kontorsmaterial", "cpv_codes": "30190000", "buyer": "Sundsvalls kommun"}
+        assert EAvropScraper._is_potentially_relevant(proc) is False
+
+    def test_is_potentially_relevant_cpv_match(self):
+        from scrapers.eavrop import EAvropScraper
+        proc = {"title": "Programvarutjänster", "cpv_codes": "72000000", "buyer": "Region Uppsala"}
+        assert EAvropScraper._is_potentially_relevant(proc) is True
+
+
+# ---------------------------------------------------------------------------
+# 11. Mercell stub
+# ---------------------------------------------------------------------------
+
+class TestMercellScraper:
+    def test_returns_empty_list(self):
+        from scrapers.mercell import MercellScraper
+        scraper = MercellScraper()
+        results = scraper.fetch()
+        assert results == []
+        assert isinstance(results, list)
+
+    def test_prints_warning(self, capsys):
+        from scrapers.mercell import MercellScraper
+        scraper = MercellScraper()
+        scraper.fetch()
+        captured = capsys.readouterr()
+        assert "inloggning" in captured.out.lower()
+
+
+# ---------------------------------------------------------------------------
+# 12. Streamlit app import check
 # ---------------------------------------------------------------------------
 
 class TestAppImport:
