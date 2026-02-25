@@ -41,6 +41,40 @@ def init_db():
             UNIQUE(source, source_id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS analyses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            procurement_id INTEGER NOT NULL UNIQUE,
+            full_notice_text TEXT,
+            kravsammanfattning TEXT,
+            matchningsanalys TEXT,
+            prisstrategi TEXT,
+            anbudshjalp TEXT,
+            model TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (procurement_id) REFERENCES procurements(id)
+        )
+    """)
+    # Add AI relevance columns if they don't exist
+    _cur = conn.execute("PRAGMA table_info(procurements)")
+    existing_cols = {row[1] for row in _cur.fetchall()}
+    if "ai_relevance" not in existing_cols:
+        conn.execute("ALTER TABLE procurements ADD COLUMN ai_relevance TEXT")
+    if "ai_relevance_reasoning" not in existing_cols:
+        conn.execute("ALTER TABLE procurements ADD COLUMN ai_relevance_reasoning TEXT")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS labels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            procurement_id INTEGER NOT NULL,
+            label TEXT NOT NULL CHECK(label IN ('relevant', 'irrelevant')),
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (procurement_id) REFERENCES procurements(id)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -145,6 +179,17 @@ def update_score(procurement_id: int, score: int, rationale: str):
     conn.close()
 
 
+def update_ai_relevance(procurement_id: int, relevance: str, reasoning: str):
+    """Update AI relevance assessment for a procurement."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE procurements SET ai_relevance = ?, ai_relevance_reasoning = ?, updated_at = ? WHERE id = ?",
+        (relevance, reasoning, datetime.now(timezone.utc).isoformat(), procurement_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_all_procurements() -> list[dict]:
     """Return all procurements as a list of dicts."""
     conn = get_connection()
@@ -189,6 +234,100 @@ def search_procurements(
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def save_analysis(procurement_id: int, analysis: dict):
+    """Insert or update an AI analysis for a procurement."""
+    conn = get_connection()
+    conn.execute("""
+        INSERT INTO analyses
+            (procurement_id, full_notice_text, kravsammanfattning, matchningsanalys,
+             prisstrategi, anbudshjalp, model, input_tokens, output_tokens)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(procurement_id) DO UPDATE SET
+            full_notice_text = excluded.full_notice_text,
+            kravsammanfattning = excluded.kravsammanfattning,
+            matchningsanalys = excluded.matchningsanalys,
+            prisstrategi = excluded.prisstrategi,
+            anbudshjalp = excluded.anbudshjalp,
+            model = excluded.model,
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            created_at = datetime('now')
+    """, (
+        procurement_id,
+        analysis.get("full_notice_text"),
+        analysis.get("kravsammanfattning"),
+        analysis.get("matchningsanalys"),
+        analysis.get("prisstrategi"),
+        analysis.get("anbudshjalp"),
+        analysis.get("model"),
+        analysis.get("input_tokens"),
+        analysis.get("output_tokens"),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_analysis(procurement_id: int) -> dict | None:
+    """Return a cached AI analysis for a procurement, or None."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM analyses WHERE procurement_id = ?", (procurement_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_label(procurement_id: int, label: str, reason: str = "") -> int:
+    """Save a feedback label for a procurement. Returns the row id."""
+    conn = get_connection()
+    cur = conn.execute(
+        "INSERT INTO labels (procurement_id, label, reason) VALUES (?, ?, ?)",
+        (procurement_id, label, reason or None),
+    )
+    row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_label(procurement_id: int) -> dict | None:
+    """Return the latest feedback label for a procurement, or None."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM labels WHERE procurement_id = ? ORDER BY id DESC LIMIT 1",
+        (procurement_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_all_labels() -> list[dict]:
+    """Return all labels with procurement titles, newest first."""
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT l.*, p.title, p.buyer, p.score, p.score_rationale
+        FROM labels l
+        JOIN procurements p ON l.procurement_id = p.id
+        ORDER BY l.created_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_label_stats() -> dict:
+    """Return label statistics."""
+    conn = get_connection()
+    total = conn.execute("SELECT COUNT(*) as c FROM labels").fetchone()["c"]
+    relevant = conn.execute(
+        "SELECT COUNT(*) as c FROM labels WHERE label = 'relevant'"
+    ).fetchone()["c"]
+    irrelevant = conn.execute(
+        "SELECT COUNT(*) as c FROM labels WHERE label = 'irrelevant'"
+    ).fetchone()["c"]
+    conn.close()
+    return {"total": total, "relevant": relevant, "irrelevant": irrelevant}
 
 
 def get_stats() -> dict:

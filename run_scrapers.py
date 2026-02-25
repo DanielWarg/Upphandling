@@ -2,6 +2,7 @@
 """CLI-skript för att köra alla scrapers, lagra resultat och scora leads."""
 
 import argparse
+import os
 import sys
 from db import init_db, upsert_procurement, get_all_procurements, update_score
 from scorer import score_procurement
@@ -38,6 +39,8 @@ def run(sources: list[str] | None = None, skip_scoring: bool = False):
         print("\nScorar alla upphandlingar...")
         score_all()
 
+    run_ai_prefilter()
+
     print("\nKlart!")
 
 
@@ -54,6 +57,20 @@ def score_all():
         )
         update_score(p["id"], score, rationale)
     print(f"Scorade {len(procurements)} upphandlingar")
+
+
+def run_ai_prefilter():
+    """Run AI prefilter on scored procurements. Skips if no API key."""
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    if not os.getenv("GEMINI_API_KEY"):
+        print("\nGEMINI_API_KEY saknas — hoppar över AI-prefilter")
+        return
+
+    print("\nKör AI-prefilter på upphandlingar med score > 0...")
+    from analyzer import ai_prefilter_all
+    ai_prefilter_all(threshold=1)
 
 
 def main():
@@ -78,6 +95,7 @@ def main():
 
     if args.score_only:
         score_all()
+        run_ai_prefilter()
     else:
         run(sources=args.sources, skip_scoring=args.skip_scoring)
 

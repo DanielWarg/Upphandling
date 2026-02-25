@@ -1,17 +1,27 @@
 """Streamlit dashboard — Upphandlingsbevakning, dark SaaS kanban."""
 
 import html as html_lib
+import json
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-from db import init_db, get_all_procurements, search_procurements, get_procurement, get_stats
+import os
+from dotenv import load_dotenv
+
+from db import (
+    init_db, get_all_procurements, search_procurements, get_procurement,
+    get_stats, get_analysis, save_label, get_label, get_all_labels, get_label_stats,
+    update_ai_relevance,
+)
 from scorer import (
     HIGH_WEIGHT_KEYWORDS,
     MEDIUM_WEIGHT_KEYWORDS,
     BASE_WEIGHT_KEYWORDS,
     KNOWN_BUYERS,
 )
+
+load_dotenv()
 
 st.set_page_config(
     page_title="Upphandlingsbevakning",
@@ -55,15 +65,24 @@ THEME_CSS = """
 .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"],
 .main .block-container { background: var(--bg-0) !important; font-family: 'Inter', sans-serif !important; }
 header[data-testid="stHeader"] { background: transparent !important; }
-.stMarkdown, .stMarkdown p, .stText, label, span, div,
+.stMarkdown, .stMarkdown p, .stText,
+.main .block-container label, .main .block-container span, .main .block-container div,
 .stSelectbox label, .stTextInput label, .stSlider label,
 .stNumberInput label { color: var(--text-0) !important; }
 
-/* --- Sidebar --- */
+/* --- Sidebar: force always visible --- */
 section[data-testid="stSidebar"] {
     background: var(--bg-1) !important;
     border-right: 1px solid var(--border) !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: none !important;
+    min-width: 260px !important;
+    width: 260px !important;
+    position: relative !important;
 }
+section[data-testid="stSidebar"] > div { overflow-y: auto; }
 section[data-testid="stSidebar"] * { color: var(--text-0) !important; }
 section[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
 section[data-testid="stSidebar"] .stRadio label {
@@ -71,18 +90,6 @@ section[data-testid="stSidebar"] .stRadio label {
     transition: background 0.15s !important; cursor: pointer !important;
 }
 section[data-testid="stSidebar"] .stRadio label:hover { background: var(--bg-3) !important; }
-
-/* --- KEEP sidebar collapse button visible --- */
-button[kind="header"], [data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    color: var(--text-1) !important;
-    background: var(--bg-2) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: var(--r-sm) !important;
-}
 
 /* --- Inputs --- */
 .stTextInput input, .stNumberInput input, .stSelectbox select,
@@ -207,7 +214,7 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
 hr { border-color: var(--border) !important; }
 .stDataFrame { border-radius: var(--r) !important; overflow: hidden !important; }
 
-/* Hide Streamlit chrome except sidebar toggle */
+/* Hide Streamlit chrome */
 #MainMenu, footer { display: none !important; }
 [data-testid="stToolbar"] { display: none !important; }
 </style>
@@ -227,9 +234,14 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+# Auto-navigate to AI Analys if ai_id query param is present
+_ai_id_from_url = st.query_params.get("ai_id")
+_default_page_index = 2 if _ai_id_from_url else 0  # 2 = "AI Analys"
+
 page = st.sidebar.radio(
     "Navigation",
-    ["Kanban", "Sök & Filter", "Detaljvy", "Inställningar"],
+    ["Kanban", "Sök & Filter", "AI Analys", "Feedback", "Detaljvy", "Inställningar"],
+    index=_default_page_index,
     label_visibility="collapsed",
 )
 
@@ -273,38 +285,147 @@ def fmt_value(val, cur) -> str:
         return ""
 
 
-def make_card(p: dict) -> str:
-    s = p.get("score", 0) or 0
-    title = esc(p.get("title") or "Utan titel")[:90]
-    buyer = esc(p.get("buyer") or "")
-    geo = esc(p.get("geography") or "")
-    source = esc((p.get("source") or "").upper())
-    deadline = (p.get("deadline") or "")[:10]
-    desc = esc((p.get("description") or "")[:120])
-    value = fmt_value(p.get("estimated_value"), p.get("currency"))
+@st.dialog("Upphandling", width="large")
+def show_procurement_dialog(proc_id: int):
+    """Native Streamlit dialog with details, feedback and AI analysis."""
+    proc = get_procurement(proc_id)
+    if not proc:
+        st.error("Upphandlingen hittades inte.")
+        return
 
-    tags = f'<span class="tag tag-src">{source}</span>'
-    if geo:
-        tags += f' <span class="tag tag-geo">{geo}</span>'
-    if deadline:
-        tags += f' <span class="tag tag-dl">{deadline}</span>'
-    if value:
-        tags += f' <span class="tag tag-val">{value}</span>'
-
-    buyer_line = f'<div class="card-buyer">{buyer}</div>' if buyer else ""
-    desc_line = f'<div class="card-desc">{desc}</div>' if desc else ""
-
-    return (
-        f'<div class="card {card_cls(s)}">'
-        f'  <div class="card-title">{title}</div>'
-        f'  {buyer_line}'
-        f'  {desc_line}'
-        f'  <div class="card-foot">'
-        f'    <div>{tags}</div>'
-        f'    <span class="badge {badge_cls(s)}">{s}</span>'
-        f'  </div>'
-        f'</div>'
+    s = proc.get("score") or 0
+    bc = bar_color(s)
+    value_str = fmt_value(proc.get("estimated_value"), proc.get("currency")) or "Ej angivet"
+    url_html = (
+        f'<a href="{esc(proc["url"])}" target="_blank">{esc(proc["url"])}</a>'
+        if proc.get("url")
+        else '<span style="color:var(--text-3)">Ej tillgänglig</span>'
     )
+
+    st.markdown(f"""
+    <div class="dp">
+        <div class="dp-title">{esc(proc.get("title", ""))}</div>
+        <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
+            <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
+            <span class="badge {badge_cls(s)}">{s}/100</span>
+        </div>
+        <div class="score-track"><div class="score-fill" style="width:{s}%;background:{bc}"></div></div>
+        <div style="font-size:11px;color:var(--text-2);margin:6px 0 18px">{esc(proc.get("score_rationale") or "Ej scorad")}</div>
+        <div class="dp-row"><div class="dp-lbl">Köpare</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>
+        <div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>
+        <div class="dp-row"><div class="dp-lbl">CPV-koder</div><div class="dp-val">{esc(proc.get("cpv_codes") or "Ej angivet")}</div></div>
+        <div class="dp-row"><div class="dp-lbl">Förfarandetyp</div><div class="dp-val">{esc(proc.get("procedure_type") or "Ej angiven")}</div></div>
+        <div class="dp-row"><div class="dp-lbl">Publicerad</div><div class="dp-val">{esc(proc.get("published_date") or "Okänt")}</div></div>
+        <div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>
+        <div class="dp-row"><div class="dp-lbl">Uppskattat värde</div><div class="dp-val">{value_str}</div></div>
+        <div class="dp-row"><div class="dp-lbl">Status</div><div class="dp-val">{esc(proc.get("status") or "Okänd")}</div></div>
+        <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Länk</div><div class="dp-val">{url_html}</div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- AI Relevance ---
+    ai_rel = proc.get("ai_relevance")
+    ai_reason = proc.get("ai_relevance_reasoning") or ""
+    if ai_rel:
+        rel_color = "#4ade80" if ai_rel == "relevant" else "#f87171"
+        rel_label = "Relevant" if ai_rel == "relevant" else "Inte relevant"
+        st.markdown(
+            f'<div style="padding:10px 14px;margin:12px 0;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);'
+            f'border-left:3px solid {rel_color}">'
+            f'<span style="font-weight:700;font-size:12px;color:{rel_color}">AI: {rel_label}</span>'
+            f'<span style="font-size:12px;color:var(--text-1);margin-left:8px"> — {esc(ai_reason)}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    if proc.get("description"):
+        with st.expander("Beskrivning", expanded=False):
+            st.markdown(proc["description"])
+
+    # --- Feedback ---
+    st.markdown("---")
+    st.markdown(
+        '<div style="font-weight:700;font-size:14px;color:var(--text-0);margin-bottom:8px">Feedback</div>',
+        unsafe_allow_html=True,
+    )
+
+    fb_reason = st.text_input(
+        "Anledning", key=f"dlg_reason_{proc_id}",
+        label_visibility="collapsed", placeholder="Anledning (valfri)",
+    )
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        btn_rel = st.button("Relevant", key=f"dlg_rel_{proc_id}", use_container_width=True)
+    with fc2:
+        btn_irr = st.button("Inte relevant", key=f"dlg_irr_{proc_id}", use_container_width=True)
+
+    if btn_rel:
+        save_label(proc_id, "relevant", fb_reason)
+    if btn_irr:
+        save_label(proc_id, "irrelevant", fb_reason)
+
+    existing_label = get_label(proc_id)
+    if existing_label:
+        lbl = existing_label["label"]
+        lbl_color = "#4ade80" if lbl == "relevant" else "#f87171"
+        lbl_text = "Relevant" if lbl == "relevant" else "Inte relevant"
+        reason_text = f' — {existing_label["reason"]}' if existing_label.get("reason") else ""
+        st.markdown(
+            f'<div style="font-size:12px;color:{lbl_color};margin-top:4px">'
+            f'Senaste: {lbl_text}{reason_text} ({existing_label["created_at"][:10]})</div>',
+            unsafe_allow_html=True,
+        )
+
+    # --- AI Analysis ---
+    st.markdown("---")
+    st.markdown(
+        '<div style="font-weight:700;font-size:14px;color:var(--text-0);margin-bottom:8px">AI Analys</div>',
+        unsafe_allow_html=True,
+    )
+
+    has_api_key = bool(os.getenv("GEMINI_API_KEY"))
+    cached = get_analysis(proc_id)
+
+    if not has_api_key:
+        st.caption("GEMINI_API_KEY saknas i .env")
+    else:
+        btn_ai = st.button(
+            "Analysera med AI" if not cached else "Analysera igen",
+            key=f"dlg_ai_{proc_id}",
+        )
+        if btn_ai:
+            from analyzer import analyze_procurement
+            with st.spinner("Analyserar med Gemini 2.0 Flash..."):
+                try:
+                    result = analyze_procurement(proc_id, force=bool(cached))
+                    if result:
+                        cached = result
+                    else:
+                        st.error("Analysen misslyckades.")
+                except Exception as e:
+                    st.error(f"Fel: {e}")
+
+    if cached:
+        with st.expander("Kravsammanfattning", expanded=True):
+            st.markdown(cached.get("kravsammanfattning") or "Ingen data.")
+        with st.expander("Matchningsanalys", expanded=True):
+            st.markdown(cached.get("matchningsanalys") or "Ingen data.")
+        with st.expander("Prisstrategi", expanded=False):
+            st.markdown(cached.get("prisstrategi") or "Ingen data.")
+        with st.expander("Anbudshjälp", expanded=False):
+            st.markdown(cached.get("anbudshjalp") or "Ingen data.")
+
+        meta_parts = []
+        if cached.get("model"):
+            meta_parts.append(f"Modell: {cached['model']}")
+        if cached.get("input_tokens"):
+            meta_parts.append(f"Input: {cached['input_tokens']} tokens")
+        if cached.get("output_tokens"):
+            meta_parts.append(f"Output: {cached['output_tokens']} tokens")
+        if cached.get("created_at"):
+            meta_parts.append(f"Analyserad: {cached['created_at'][:10]}")
+        if meta_parts:
+            st.caption(" | ".join(meta_parts))
 
 
 # ============================================================
@@ -333,31 +454,89 @@ if page == "Kanban":
             unsafe_allow_html=True,
         )
     else:
-        high = [p for p in all_procs if (p.get("score") or 0) >= 60]
-        med = [p for p in all_procs if 30 <= (p.get("score") or 0) < 60]
-        low = [p for p in all_procs if (p.get("score") or 0) < 30]
+        high = [p for p in all_procs if (p.get("score") or 0) >= 60 and p.get("ai_relevance") != "irrelevant"]
+        med = [p for p in all_procs if 30 <= (p.get("score") or 0) < 60 and p.get("ai_relevance") != "irrelevant"]
+        low = [p for p in all_procs if (p.get("score") or 0) < 30 or p.get("ai_relevance") == "irrelevant"]
 
-        cols = [
-            ("Hög prioritet", high, "var(--orange)"),
-            ("Medel", med, "var(--yellow)"),
-            ("Låg", low, "var(--text-3)"),
-        ]
+        col_h, col_m, col_l = st.columns(3)
 
-        html = '<div class="kb">'
-        for title, items, accent in cols:
-            cards = "".join(make_card(p) for p in items[:40])
-            empty = '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:12px">Inga upphandlingar</div>'
-            html += (
-                f'<div class="kb-col">'
-                f'  <div class="kb-col-head">'
-                f'    <span class="kb-col-title" style="color:{accent}">{title}</span>'
-                f'    <span class="kb-count">{len(items)}</span>'
-                f'  </div>'
-                f'  <div class="kb-cards">{cards or empty}</div>'
-                f'</div>'
-            )
-        html += '</div>'
-        st.markdown(html, unsafe_allow_html=True)
+        def _render_column(col, title: str, accent: str, items: list, max_show: int = 50):
+            with col:
+                st.markdown(
+                    f'<div style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px;'
+                    f'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+                    f'<span style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;color:{accent}">{title}</span>'
+                    f'<span class="kb-count">{len(items)}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                if not items:
+                    st.markdown(
+                        '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:12px">Inga upphandlingar</div>',
+                        unsafe_allow_html=True,
+                    )
+                for p in items[:max_show]:
+                    _s = p.get("score", 0) or 0
+                    _title = esc((p.get("title") or "Utan titel")[:90])
+                    _buyer = esc(p.get("buyer") or "")
+                    _source = esc((p.get("source") or "").upper())
+                    _deadline = (p.get("deadline") or "")[:10]
+                    _desc = esc((p.get("description") or "")[:120])
+                    _value = fmt_value(p.get("estimated_value"), p.get("currency"))
+                    _label = get_label(p["id"])
+
+                    tags = f'<span class="tag tag-src">{_source}</span>'
+                    if _deadline:
+                        tags += f' <span class="tag tag-dl">{_deadline}</span>'
+                    if _value:
+                        tags += f' <span class="tag tag-val">{_value}</span>'
+
+                    label_indicator = ""
+                    if _label:
+                        _lc = "#4ade80" if _label["label"] == "relevant" else "#f87171"
+                        _lt = "R" if _label["label"] == "relevant" else "IR"
+                        label_indicator = (
+                            f'<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;'
+                            f'font-weight:700;color:{_lc};border:1px solid {_lc}30;margin-left:4px">{_lt}</span>'
+                        )
+
+                    cached_ai = get_analysis(p["id"])
+                    ai_indicator = ""
+                    if cached_ai:
+                        ai_indicator = (
+                            '<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;'
+                            'font-weight:700;color:#60a5fa;border:1px solid #60a5fa30;margin-left:4px">AI</span>'
+                        )
+
+                    _ai_rel = p.get("ai_relevance")
+                    ai_rel_indicator = ""
+                    if _ai_rel == "irrelevant":
+                        ai_rel_indicator = (
+                            '<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;'
+                            'font-weight:700;color:#f87171;border:1px solid #f8717130;margin-left:4px">IR-AI</span>'
+                        )
+
+                    st.markdown(
+                        f'<div class="card {card_cls(_s)}" style="margin-bottom:2px">'
+                        f'  <div class="card-title">{_title}</div>'
+                        f'  {"<div class=card-buyer>" + _buyer + "</div>" if _buyer else ""}'
+                        f'  {"<div class=card-desc>" + _desc + "</div>" if _desc else ""}'
+                        f'  <div class="card-foot">'
+                        f'    <div>{tags}</div>'
+                        f'    <div><span class="badge {badge_cls(_s)}">{_s}</span>{label_indicator}{ai_indicator}{ai_rel_indicator}</div>'
+                        f'  </div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("Visa", key=f"kb_{p['id']}", use_container_width=True):
+                        show_procurement_dialog(p["id"])
+
+                if len(items) > max_show:
+                    st.caption(f"+{len(items) - max_show} till")
+
+        _render_column(col_h, "Hög prioritet", "#f97316", high)
+        _render_column(col_m, "Medel", "#eab308", med)
+        _render_column(col_l, "Låg / Filtrerade", "#52525b", low, max_show=20)
 
 
 # ============================================================
@@ -395,6 +574,218 @@ elif page == "Sök & Filter":
     else:
         st.markdown(
             '<div class="empty"><h3>Inga resultat</h3><p>Prova att ändra filtren.</p></div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ============================================================
+# AI ANALYS
+# ============================================================
+elif page == "AI Analys":
+    st.markdown(
+        '<div class="topbar"><h1>AI Analys</h1>'
+        '<p>Analysera upphandlingar med Gemini 2.0 Flash</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    has_api_key = bool(os.getenv("GEMINI_API_KEY"))
+
+    if not has_api_key:
+        st.warning(
+            "GEMINI_API_KEY saknas. Skapa en .env-fil med din API-nyckel:\n\n"
+            "`GEMINI_API_KEY=din-nyckel-här`"
+        )
+
+    all_procs = get_all_procurements()
+
+    if not all_procs:
+        st.markdown(
+            '<div class="empty"><h3>Ingen data</h3>'
+            '<p>Kör <code>python run_scrapers.py</code> för att hämta upphandlingar.</p></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        # Check for ai_id query parameter (from kanban modal)
+        ai_id_param = st.query_params.get("ai_id")
+        preselected_index = 0
+        options_list = list(all_procs)
+        if ai_id_param:
+            try:
+                ai_id_int = int(ai_id_param)
+                for i, p in enumerate(options_list):
+                    if p["id"] == ai_id_int:
+                        preselected_index = i
+                        break
+            except (ValueError, TypeError):
+                pass
+
+        options = {
+            p["id"]: f'[{p.get("score", 0)}] {(p.get("title") or "Utan titel")[:80]} ({(p.get("source") or "").upper()})'
+            for p in options_list
+        }
+        id_list = list(options.keys())
+        selected_id = st.selectbox(
+            "Välj upphandling",
+            id_list,
+            index=preselected_index,
+            format_func=lambda x: options[x],
+        )
+
+        proc = get_procurement(selected_id)
+        if proc:
+            s = proc.get("score") or 0
+            bc = bar_color(s)
+            value_str = fmt_value(proc.get("estimated_value"), proc.get("currency")) or "Ej angivet"
+
+            st.markdown(f"""
+            <div class="dp">
+                <div class="dp-title">{esc(proc.get("title", ""))}</div>
+                <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
+                    <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
+                    <span class="badge {badge_cls(s)}">{s}/100</span>
+                </div>
+                <div class="dp-row"><div class="dp-lbl">Köpare</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>
+                <div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>
+                <div class="dp-row"><div class="dp-lbl">Score</div><div class="dp-val">{s}/100</div></div>
+                <div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>
+                <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Uppskattat värde</div><div class="dp-val">{value_str}</div></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Check for cached analysis
+            cached = get_analysis(selected_id)
+
+            # Auto-run analysis if coming from kanban with ai_id and no cache
+            auto_run = bool(ai_id_param) and not cached and has_api_key
+
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                run_analysis = st.button(
+                    "Analysera med AI" if not cached else "Analysera igen",
+                    disabled=not has_api_key,
+                )
+
+            if run_analysis or auto_run:
+                from analyzer import analyze_procurement
+                with st.spinner("Analyserar med Gemini 2.0 Flash..."):
+                    try:
+                        result = analyze_procurement(selected_id, force=run_analysis)
+                        if result:
+                            cached = result
+                            # Clear query param after successful analysis
+                            st.query_params.clear()
+                        else:
+                            st.error("Analysen misslyckades. Kontrollera loggarna.")
+                    except Exception as e:
+                        st.error(f"Fel vid analys: {e}")
+
+            if cached:
+                st.markdown("---")
+
+                with st.expander("Kravsammanfattning", expanded=True):
+                    st.markdown(cached.get("kravsammanfattning") or "Ingen data.")
+
+                with st.expander("Matchningsanalys", expanded=True):
+                    st.markdown(cached.get("matchningsanalys") or "Ingen data.")
+
+                with st.expander("Prisstrategi", expanded=False):
+                    st.markdown(cached.get("prisstrategi") or "Ingen data.")
+
+                with st.expander("Anbudshjälp", expanded=False):
+                    st.markdown(cached.get("anbudshjalp") or "Ingen data.")
+
+                # Metadata footer
+                meta_parts = []
+                if cached.get("model"):
+                    meta_parts.append(f"Modell: {cached['model']}")
+                if cached.get("input_tokens"):
+                    meta_parts.append(f"Input: {cached['input_tokens']} tokens")
+                if cached.get("output_tokens"):
+                    meta_parts.append(f"Output: {cached['output_tokens']} tokens")
+                if cached.get("created_at"):
+                    meta_parts.append(f"Analyserad: {cached['created_at']}")
+
+                if meta_parts:
+                    st.markdown(
+                        f'<div style="font-size:11px;color:var(--text-3);padding:12px 0;border-top:1px solid var(--border)">'
+                        f'{" | ".join(meta_parts)}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+
+# ============================================================
+# FEEDBACK
+# ============================================================
+elif page == "Feedback":
+    st.markdown(
+        '<div class="topbar"><h1>Feedback</h1>'
+        '<p>Markerade upphandlingar och feedbackhistorik</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    label_stats = get_label_stats()
+    fc1, fc2, fc3 = st.columns(3)
+    fc1.metric("Totalt bedömda", label_stats["total"])
+    fc2.metric("Relevanta", label_stats["relevant"])
+    fc3.metric("Inte relevanta", label_stats["irrelevant"])
+
+    all_labels = get_all_labels()
+    if all_labels:
+        st.markdown("### Senaste feedback")
+        for lb in all_labels[:50]:
+            lbl = lb["label"]
+            color = "#4ade80" if lbl == "relevant" else "#f87171"
+            icon = "+" if lbl == "relevant" else "-"
+            reason = f' — {lb["reason"]}' if lb.get("reason") else ""
+            score = lb.get("score", 0) or 0
+            st.markdown(
+                f'<div style="display:flex;align-items:flex-start;gap:12px;padding:10px 14px;margin-bottom:6px;'
+                f'background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">'
+                f'<span style="color:{color};font-weight:800;font-size:16px;min-width:16px">{icon}</span>'
+                f'<div style="flex:1">'
+                f'<div style="font-size:13px;font-weight:600;color:var(--text-0)">{esc(lb.get("title", ""))}</div>'
+                f'<div style="font-size:11px;color:var(--text-2);margin-top:2px">'
+                f'{esc(lb.get("buyer", ""))} | Score: {score} | {lb["created_at"][:10]}{reason}</div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Show top irrelevant patterns
+        irrelevant = [lb for lb in all_labels if lb["label"] == "irrelevant"]
+        if irrelevant:
+            st.markdown("### Mönster i felklassade")
+            irr_buyers = {}
+            irr_reasons = {}
+            for lb in irrelevant:
+                buyer = lb.get("buyer") or "Okänd"
+                irr_buyers[buyer] = irr_buyers.get(buyer, 0) + 1
+                if lb.get("reason"):
+                    irr_reasons[lb["reason"]] = irr_reasons.get(lb["reason"], 0) + 1
+
+            if irr_buyers:
+                st.markdown("**Köpare markerade som irrelevanta:**")
+                sorted_buyers = sorted(irr_buyers.items(), key=lambda x: x[1], reverse=True)
+                for buyer, count in sorted_buyers[:10]:
+                    st.markdown(
+                        f'<div style="font-size:12px;color:var(--text-1);padding:2px 0">'
+                        f'{esc(buyer)}: <span style="color:#f87171">{count}x</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+            if irr_reasons:
+                st.markdown("**Vanligaste anledningar:**")
+                sorted_reasons = sorted(irr_reasons.items(), key=lambda x: x[1], reverse=True)
+                for reason, count in sorted_reasons[:10]:
+                    st.markdown(
+                        f'<div style="font-size:12px;color:var(--text-1);padding:2px 0">'
+                        f'{esc(reason)}: <span style="color:#f87171">{count}x</span></div>',
+                        unsafe_allow_html=True,
+                    )
+    else:
+        st.markdown(
+            '<div class="empty"><h3>Ingen feedback ännu</h3>'
+            '<p>Använd Relevant/Inte relevant-knapparna på Kanban-sidan för att markera upphandlingar.</p></div>',
             unsafe_allow_html=True,
         )
 

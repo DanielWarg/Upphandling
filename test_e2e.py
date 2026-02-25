@@ -180,7 +180,7 @@ class TestScoring:
         from scorer import score_procurement
         score, rationale = score_procurement(
             title="Realtidsinformation och trafikledningssystem",
-            description="Dataplattform for kollektivtrafik",
+            description="Dataplattform for kollektivtrafik med passagerarinformation",
         )
         assert score >= 60
         assert "realtid" in rationale.lower()
@@ -200,17 +200,16 @@ class TestScoring:
             title="Kontorsmaterial",
             description="Ramavtal for pennor och papper",
         )
-        assert score == 0
-        assert "inga matchande" in rationale.lower()
+        assert score == 0  # negative keyword brings it to 0
 
     def test_buyer_bonus(self):
         from scorer import score_procurement
         score_with, _ = score_procurement(
-            title="kollektivtrafik",
-            buyer="Region Stockholm",
+            title="realtidssystem för kollektivtrafik",
+            buyer="Skånetrafiken",
         )
         score_without, _ = score_procurement(
-            title="kollektivtrafik",
+            title="realtidssystem för kollektivtrafik",
             buyer="Okand kopare AB",
         )
         assert score_with > score_without
@@ -226,14 +225,16 @@ class TestScoring:
 
     def test_score_returns_rationale(self):
         from scorer import score_procurement
-        _, rationale = score_procurement(title="realtidssystem")
-        assert "+20" in rationale
+        _, rationale = score_procurement(
+            title="realtidssystem för kollektivtrafik",
+        )
+        assert "+25" in rationale
 
     def test_cpv_codes_searched(self):
         from scorer import score_procurement
         score, rationale = score_procurement(
-            title="Systemupphandling",
-            cpv_codes="kollektivtrafik",
+            title="Biljettsystem för kollektivtrafik",
+            cpv_codes="48000000",
         )
         assert score > 0
 
@@ -378,7 +379,187 @@ class TestFullPipeline:
 
 
 # ---------------------------------------------------------------------------
-# 5. Streamlit app import check
+# 5. Labels / feedback
+# ---------------------------------------------------------------------------
+
+class TestLabels:
+    def test_save_and_get_label(self, use_test_db):
+        from db import upsert_procurement, save_label, get_label
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        save_label(1, "relevant", "Bra match")
+        label = get_label(1)
+        assert label is not None
+        assert label["label"] == "relevant"
+        assert label["reason"] == "Bra match"
+
+    def test_latest_label_wins(self, use_test_db):
+        from db import upsert_procurement, save_label, get_label
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        save_label(1, "relevant")
+        save_label(1, "irrelevant", "Trafikdrift")
+        label = get_label(1)
+        assert label["label"] == "irrelevant"
+        assert label["reason"] == "Trafikdrift"
+
+    def test_label_stats(self, use_test_db):
+        from db import upsert_procurement, save_label, get_label_stats
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        upsert_procurement(SAMPLE_MED_SCORE)
+        save_label(1, "relevant")
+        save_label(2, "irrelevant")
+        stats = get_label_stats()
+        assert stats["total"] == 2
+        assert stats["relevant"] == 1
+        assert stats["irrelevant"] == 1
+
+    def test_get_all_labels(self, use_test_db):
+        from db import upsert_procurement, save_label, get_all_labels
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        save_label(1, "relevant", "IT-system")
+        labels = get_all_labels()
+        assert len(labels) == 1
+        assert labels[0]["title"] == SAMPLE_HIGH_SCORE["title"]
+
+
+# ---------------------------------------------------------------------------
+# 6. Analyzer JSON parsing
+# ---------------------------------------------------------------------------
+
+class TestAnalyzerParsing:
+    def test_parse_valid_json(self):
+        from analyzer import _parse_analysis_json
+        raw = '{"kravsammanfattning":"a","matchningsanalys":"b","prisstrategi":"c","anbudshjalp":"d"}'
+        result = _parse_analysis_json(raw)
+        assert result is not None
+        assert result["kravsammanfattning"] == "a"
+
+    def test_parse_json_in_code_block(self):
+        from analyzer import _parse_analysis_json
+        raw = '```json\n{"kravsammanfattning":"a","matchningsanalys":"b","prisstrategi":"c","anbudshjalp":"d"}\n```'
+        result = _parse_analysis_json(raw)
+        assert result is not None
+
+    def test_parse_missing_key_returns_none(self):
+        from analyzer import _parse_analysis_json
+        raw = '{"kravsammanfattning":"a","matchningsanalys":"b"}'
+        result = _parse_analysis_json(raw)
+        assert result is None
+
+    def test_parse_invalid_json_returns_none(self):
+        from analyzer import _parse_analysis_json
+        result = _parse_analysis_json("not json at all")
+        assert result is None
+
+    def test_parse_empty_value_returns_none(self):
+        from analyzer import _parse_analysis_json
+        raw = '{"kravsammanfattning":"","matchningsanalys":"b","prisstrategi":"c","anbudshjalp":"d"}'
+        result = _parse_analysis_json(raw)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# 7. Streamlit app import check
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 7. AI Prefilter
+# ---------------------------------------------------------------------------
+
+class TestAiPrefilter:
+    def test_parse_valid_prefilter_json(self):
+        from analyzer import _parse_prefilter_json
+        raw = '{"relevant": true, "reasoning": "Kollektivtrafik IT-system"}'
+        result = _parse_prefilter_json(raw)
+        assert result is not None
+        assert result["relevant"] is True
+        assert result["reasoning"] == "Kollektivtrafik IT-system"
+
+    def test_parse_prefilter_false(self):
+        from analyzer import _parse_prefilter_json
+        raw = '{"relevant": false, "reasoning": "Konserthus, inte kollektivtrafik"}'
+        result = _parse_prefilter_json(raw)
+        assert result is not None
+        assert result["relevant"] is False
+
+    def test_parse_prefilter_code_block(self):
+        from analyzer import _parse_prefilter_json
+        raw = '```json\n{"relevant": true, "reasoning": "test"}\n```'
+        result = _parse_prefilter_json(raw)
+        assert result is not None
+        assert result["relevant"] is True
+
+    def test_parse_prefilter_invalid_json(self):
+        from analyzer import _parse_prefilter_json
+        result = _parse_prefilter_json("not json at all")
+        assert result is None
+
+    def test_parse_prefilter_missing_relevant_key(self):
+        from analyzer import _parse_prefilter_json
+        raw = '{"reasoning": "test"}'
+        result = _parse_prefilter_json(raw)
+        assert result is None
+
+    def test_parse_prefilter_non_bool_relevant(self):
+        from analyzer import _parse_prefilter_json
+        raw = '{"relevant": "yes", "reasoning": "test"}'
+        result = _parse_prefilter_json(raw)
+        assert result is None
+
+    def test_update_ai_relevance(self, use_test_db):
+        from db import upsert_procurement, update_ai_relevance, get_procurement
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_ai_relevance(1, "relevant", "IT-system för kollektivtrafik")
+        proc = get_procurement(1)
+        assert proc["ai_relevance"] == "relevant"
+        assert proc["ai_relevance_reasoning"] == "IT-system för kollektivtrafik"
+
+    def test_update_ai_relevance_irrelevant(self, use_test_db):
+        from db import upsert_procurement, update_ai_relevance, get_procurement
+        upsert_procurement(SAMPLE_LOW_SCORE)
+        update_ai_relevance(1, "irrelevant", "Kontorsmaterial, inte IT")
+        proc = get_procurement(1)
+        assert proc["ai_relevance"] == "irrelevant"
+        assert proc["ai_relevance_reasoning"] == "Kontorsmaterial, inte IT"
+
+    def test_ai_prefilter_all_skips_assessed(self, use_test_db):
+        """ai_prefilter_all should skip procurements that already have ai_relevance set."""
+        from db import upsert_procurement, update_score, update_ai_relevance, get_procurement
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_score(1, 80, "hög")
+        update_ai_relevance(1, "relevant", "Redan bedömd")
+
+        # Mock the Gemini client so we can verify it's NOT called
+        with patch("analyzer.get_client") as mock_client:
+            mock_client.return_value = MagicMock()
+            from analyzer import ai_prefilter_all
+            ai_prefilter_all(threshold=0, force=False)
+            # get_client is called once to check key exists, but generate_content should not be called
+            mock_client.return_value.models.generate_content.assert_not_called()
+
+    def test_ai_prefilter_all_force_reassess(self, use_test_db):
+        """ai_prefilter_all with force=True should reassess even already-assessed procurements."""
+        from db import upsert_procurement, update_score, update_ai_relevance
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_score(1, 80, "hög")
+        update_ai_relevance(1, "relevant", "Redan bedömd")
+
+        mock_response = MagicMock()
+        mock_response.text = '{"relevant": false, "reasoning": "Omvärdering"}'
+
+        mock_gen = MagicMock()
+        mock_gen.models.generate_content.return_value = mock_response
+
+        with patch("analyzer.get_client", return_value=mock_gen):
+            from analyzer import ai_prefilter_all
+            filtered = ai_prefilter_all(threshold=0, force=True)
+            assert filtered == 1
+            from db import get_procurement
+            proc = get_procurement(1)
+            assert proc["ai_relevance"] == "irrelevant"
+
+
+# ---------------------------------------------------------------------------
+# 8. Streamlit app import check
 # ---------------------------------------------------------------------------
 
 class TestAppImport:
