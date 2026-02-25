@@ -25,14 +25,16 @@ FIELDS = [
     "estimated-value-cur-proc",
 ]
 
-# Flera sökfrågor för att fånga relevanta upphandlingar
+# Smalare sökfrågor — kombinerar CPV med nyckelord för att minska brus
 QUERIES = [
-    # Transport-CPV senaste 2 åren
-    "CY=SWE AND classification-cpv=60* AND publication-date>20240101",
-    # IT-system för transport
-    "CY=SWE AND classification-cpv=48* AND publication-date>20240101",
-    # Programvarutjänster
-    "CY=SWE AND classification-cpv=72* AND publication-date>20240101",
+    # Kollektivtrafik-IT specifika CPV-koder
+    "CY=SWE AND (classification-cpv=48813* OR classification-cpv=48814*) AND publication-date>20250901",
+    # IT-tjänster + transport-nyckelord i titel/beskrivning
+    'CY=SWE AND classification-cpv=72* AND (TD~"kollektivtrafik" OR TD~"realtid" OR TD~"trafikledning" OR TD~"passagerarinformation") AND publication-date>20250901',
+    # Transporttjänster + system-nyckelord
+    'CY=SWE AND classification-cpv=60* AND (TD~"system" OR TD~"plattform" OR TD~"realtid" OR TD~"IT") AND publication-date>20250901',
+    # Bred sökning — kända transportköpare + IT-CPV
+    'CY=SWE AND (classification-cpv=48* OR classification-cpv=72*) AND (BN~"trafik" OR BN~"Skånetrafiken" OR BN~"Västtrafik" OR BN~"Samtrafiken") AND publication-date>20250901',
 ]
 
 PAGE_SIZE = 50
