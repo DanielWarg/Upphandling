@@ -706,7 +706,7 @@ class TestOllamaPrefilter:
 
         with patch("analyzer.httpx.post", return_value=mock_resp):
             from analyzer import _call_ollama
-            result = _call_ollama("system", "user", model="qwen3:14b")
+            result = _call_ollama("system", "user", model="ministral-3-14b")
             assert result == '{"relevant": true, "reasoning": "test"}'
 
     def test_call_ollama_failure_returns_none(self):
@@ -773,7 +773,7 @@ class TestOllamaPrefilter:
 
         with patch("analyzer.httpx.post", return_value=mock_resp):
             from analyzer import ollama_prefilter_all
-            filtered = ollama_prefilter_all(model="qwen3:14b")
+            filtered = ollama_prefilter_all(model="ministral-3-14b")
             assert filtered == 1  # Only the scored one should be processed
 
     def test_ollama_prefilter_all_skips_assessed(self, use_test_db):
@@ -784,7 +784,7 @@ class TestOllamaPrefilter:
 
         with patch("analyzer.httpx.post") as mock_post:
             from analyzer import ollama_prefilter_all
-            ollama_prefilter_all(model="qwen3:14b", force=False)
+            ollama_prefilter_all(model="ministral-3-14b", force=False)
             mock_post.assert_not_called()
 
     def test_ollama_prefilter_all_force_reassess(self, use_test_db):
@@ -803,7 +803,7 @@ class TestOllamaPrefilter:
 
         with patch("analyzer.httpx.post", return_value=mock_resp):
             from analyzer import ollama_prefilter_all
-            filtered = ollama_prefilter_all(model="qwen3:14b", force=True)
+            filtered = ollama_prefilter_all(model="ministral-3-14b", force=True)
             assert filtered == 1
             from db import get_procurement
             proc = get_procurement(1)
@@ -990,6 +990,92 @@ class TestMercellScraper:
 # ---------------------------------------------------------------------------
 # 12. Streamlit app import check
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 13. Dedup and bulk analysis
+# ---------------------------------------------------------------------------
+
+class TestDedup:
+    def test_dedup_same_title_buyer(self, use_test_db):
+        """Two posts with same source+title+buyer → only one remains (latest published_date kept)."""
+        from db import upsert_procurement, get_all_procurements, deduplicate_procurements
+
+        proc_old = {
+            **SAMPLE_HIGH_SCORE,
+            "source_id": "TED-DUP-OLD",
+            "published_date": "2026-01-01",
+        }
+        proc_new = {
+            **SAMPLE_HIGH_SCORE,
+            "source_id": "TED-DUP-NEW",
+            "published_date": "2026-02-20",
+        }
+        upsert_procurement(proc_old)
+        upsert_procurement(proc_new)
+
+        assert len(get_all_procurements()) == 2
+
+        removed = deduplicate_procurements()
+        assert removed == 1
+
+        remaining = get_all_procurements()
+        assert len(remaining) == 1
+        assert remaining[0]["source_id"] == "TED-DUP-NEW"
+
+
+class TestBulkAnalysis:
+    def test_analyze_all_relevant_skips_cached(self, use_test_db):
+        """Already-analyzed procurements should be skipped unless force=True."""
+        from db import upsert_procurement, update_score, update_ai_relevance, save_analysis
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_score(1, 80, "hög")
+        update_ai_relevance(1, "relevant", "Kollektivtrafik IT")
+        # Pre-populate cached analysis
+        save_analysis(1, {
+            "full_notice_text": None,
+            "kravsammanfattning": "cached",
+            "matchningsanalys": "cached",
+            "prisstrategi": "cached",
+            "anbudshjalp": "cached",
+            "model": "gemini-2.0-flash",
+            "input_tokens": 100,
+            "output_tokens": 50,
+        })
+
+        with patch("analyzer._call_ollama_tools") as mock_tools:
+            from analyzer import analyze_all_relevant
+            count = analyze_all_relevant(min_score=1, force=False)
+            assert count == 0
+            mock_tools.assert_not_called()
+
+    def test_analyze_all_relevant_processes_relevant(self, use_test_db):
+        """Only procurements with ai_relevance=='relevant' should be analyzed."""
+        from db import upsert_procurement, update_score, update_ai_relevance
+
+        # Relevant procurement
+        upsert_procurement(SAMPLE_HIGH_SCORE)
+        update_score(1, 80, "hög")
+        update_ai_relevance(1, "relevant", "Kollektivtrafik IT")
+
+        # Irrelevant procurement
+        upsert_procurement(SAMPLE_LOW_SCORE)
+        update_score(2, 5, "låg")
+        update_ai_relevance(2, "irrelevant", "Kontorsmaterial")
+
+        # Unassessed procurement
+        upsert_procurement(SAMPLE_MED_SCORE)
+        update_score(3, 40, "medel")
+
+        tools_response = {"kravsammanfattning": "a", "matchningsanalys": "b", "prisstrategi": "c", "anbudshjalp": "d"}
+
+        with patch("analyzer._call_ollama_tools", return_value=tools_response) as mock_tools:
+            with patch("analyzer.fetch_full_notice_text", return_value=None):
+                from analyzer import analyze_all_relevant
+                count = analyze_all_relevant(min_score=1, force=False)
+                assert count == 1  # Only the relevant one
+                # Verify LLM was called exactly once (for the relevant procurement)
+                assert mock_tools.call_count == 1
+
 
 class TestAppImport:
     def test_app_module_is_importable(self):

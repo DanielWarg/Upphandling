@@ -6,19 +6,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-import os
 from dotenv import load_dotenv
 
 from db import (
     init_db, get_all_procurements, search_procurements, get_procurement,
     get_stats, get_analysis, save_label, get_label, get_all_labels, get_label_stats,
-    update_ai_relevance,
-)
-from scorer import (
-    HIGH_WEIGHT_KEYWORDS,
-    MEDIUM_WEIGHT_KEYWORDS,
-    BASE_WEIGHT_KEYWORDS,
-    KNOWN_BUYERS,
 )
 
 load_dotenv()
@@ -198,9 +190,6 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
 .score-track { width: 100%; height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .score-fill { height: 100%; border-radius: 3px; transition: width 0.5s cubic-bezier(.4,0,.2,1); }
 
-/* --- Keyword tags --- */
-.kw { display: inline-block; padding: 4px 10px; margin: 3px 4px 3px 0; border-radius: 5px; font-size: 12px; font-family: 'SF Mono','Fira Code',monospace; background: var(--bg-2); border: 1px solid var(--border); color: var(--text-0); }
-
 /* --- Topbar --- */
 .topbar { margin-bottom: 24px; }
 .topbar h1 { font-size: 24px; font-weight: 800; color: var(--text-0); letter-spacing: -0.5px; margin: 0 0 2px; }
@@ -234,14 +223,9 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-# Auto-navigate to AI Analys if ai_id query param is present
-_ai_id_from_url = st.query_params.get("ai_id")
-_default_page_index = 2 if _ai_id_from_url else 0  # 2 = "AI Analys"
-
 page = st.sidebar.radio(
     "Navigation",
-    ["Kanban", "Sök & Filter", "AI Analys", "Feedback", "Detaljvy", "Inställningar"],
-    index=_default_page_index,
+    ["Kanban", "Sök & Filter", "Feedback"],
     label_visibility="collapsed",
 )
 
@@ -383,27 +367,23 @@ def show_procurement_dialog(proc_id: int):
         unsafe_allow_html=True,
     )
 
-    has_api_key = bool(os.getenv("GEMINI_API_KEY"))
     cached = get_analysis(proc_id)
 
-    if not has_api_key:
-        st.caption("GEMINI_API_KEY saknas i .env")
-    else:
-        btn_ai = st.button(
-            "Analysera med AI" if not cached else "Analysera igen",
-            key=f"dlg_ai_{proc_id}",
-        )
-        if btn_ai:
-            from analyzer import analyze_procurement
-            with st.spinner("Analyserar med Gemini 2.0 Flash..."):
-                try:
-                    result = analyze_procurement(proc_id, force=bool(cached))
-                    if result:
-                        cached = result
-                    else:
-                        st.error("Analysen misslyckades.")
-                except Exception as e:
-                    st.error(f"Fel: {e}")
+    btn_ai = st.button(
+        "Analysera med AI" if not cached else "Analysera igen",
+        key=f"dlg_ai_{proc_id}",
+    )
+    if btn_ai:
+        from analyzer import analyze_procurement
+        with st.spinner("Analyserar med Ollama..."):
+            try:
+                result = analyze_procurement(proc_id, force=bool(cached))
+                if result:
+                    cached = result
+                else:
+                    st.error("Analysen misslyckades.")
+            except Exception as e:
+                st.error(f"Fel: {e}")
 
     if cached:
         with st.expander("Kravsammanfattning", expanded=True):
@@ -586,141 +566,6 @@ elif page == "Sök & Filter":
 
 
 # ============================================================
-# AI ANALYS
-# ============================================================
-elif page == "AI Analys":
-    st.markdown(
-        '<div class="topbar"><h1>AI Analys</h1>'
-        '<p>Analysera upphandlingar med Gemini 2.0 Flash</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    has_api_key = bool(os.getenv("GEMINI_API_KEY"))
-
-    if not has_api_key:
-        st.warning(
-            "GEMINI_API_KEY saknas. Skapa en .env-fil med din API-nyckel:\n\n"
-            "`GEMINI_API_KEY=din-nyckel-här`"
-        )
-
-    all_procs = get_all_procurements()
-
-    if not all_procs:
-        st.markdown(
-            '<div class="empty"><h3>Ingen data</h3>'
-            '<p>Kör <code>python run_scrapers.py</code> för att hämta upphandlingar.</p></div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        # Check for ai_id query parameter (from kanban modal)
-        ai_id_param = st.query_params.get("ai_id")
-        preselected_index = 0
-        options_list = list(all_procs)
-        if ai_id_param:
-            try:
-                ai_id_int = int(ai_id_param)
-                for i, p in enumerate(options_list):
-                    if p["id"] == ai_id_int:
-                        preselected_index = i
-                        break
-            except (ValueError, TypeError):
-                pass
-
-        options = {
-            p["id"]: f'[{p.get("score", 0)}] {(p.get("title") or "Utan titel")[:80]} ({(p.get("source") or "").upper()})'
-            for p in options_list
-        }
-        id_list = list(options.keys())
-        selected_id = st.selectbox(
-            "Välj upphandling",
-            id_list,
-            index=preselected_index,
-            format_func=lambda x: options[x],
-        )
-
-        proc = get_procurement(selected_id)
-        if proc:
-            s = proc.get("score") or 0
-            bc = bar_color(s)
-            value_str = fmt_value(proc.get("estimated_value"), proc.get("currency")) or "Ej angivet"
-
-            st.markdown(f"""
-            <div class="dp">
-                <div class="dp-title">{esc(proc.get("title", ""))}</div>
-                <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
-                    <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
-                    <span class="badge {badge_cls(s)}">{s}/100</span>
-                </div>
-                <div class="dp-row"><div class="dp-lbl">Köpare</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>
-                <div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>
-                <div class="dp-row"><div class="dp-lbl">Score</div><div class="dp-val">{s}/100</div></div>
-                <div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>
-                <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Uppskattat värde</div><div class="dp-val">{value_str}</div></div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Check for cached analysis
-            cached = get_analysis(selected_id)
-
-            # Auto-run analysis if coming from kanban with ai_id and no cache
-            auto_run = bool(ai_id_param) and not cached and has_api_key
-
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                run_analysis = st.button(
-                    "Analysera med AI" if not cached else "Analysera igen",
-                    disabled=not has_api_key,
-                )
-
-            if run_analysis or auto_run:
-                from analyzer import analyze_procurement
-                with st.spinner("Analyserar med Gemini 2.0 Flash..."):
-                    try:
-                        result = analyze_procurement(selected_id, force=run_analysis)
-                        if result:
-                            cached = result
-                            # Clear query param after successful analysis
-                            st.query_params.clear()
-                        else:
-                            st.error("Analysen misslyckades. Kontrollera loggarna.")
-                    except Exception as e:
-                        st.error(f"Fel vid analys: {e}")
-
-            if cached:
-                st.markdown("---")
-
-                with st.expander("Kravsammanfattning", expanded=True):
-                    st.markdown(cached.get("kravsammanfattning") or "Ingen data.")
-
-                with st.expander("Matchningsanalys", expanded=True):
-                    st.markdown(cached.get("matchningsanalys") or "Ingen data.")
-
-                with st.expander("Prisstrategi", expanded=False):
-                    st.markdown(cached.get("prisstrategi") or "Ingen data.")
-
-                with st.expander("Anbudshjälp", expanded=False):
-                    st.markdown(cached.get("anbudshjalp") or "Ingen data.")
-
-                # Metadata footer
-                meta_parts = []
-                if cached.get("model"):
-                    meta_parts.append(f"Modell: {cached['model']}")
-                if cached.get("input_tokens"):
-                    meta_parts.append(f"Input: {cached['input_tokens']} tokens")
-                if cached.get("output_tokens"):
-                    meta_parts.append(f"Output: {cached['output_tokens']} tokens")
-                if cached.get("created_at"):
-                    meta_parts.append(f"Analyserad: {cached['created_at']}")
-
-                if meta_parts:
-                    st.markdown(
-                        f'<div style="font-size:11px;color:var(--text-3);padding:12px 0;border-top:1px solid var(--border)">'
-                        f'{" | ".join(meta_parts)}</div>',
-                        unsafe_allow_html=True,
-                    )
-
-
-# ============================================================
 # FEEDBACK
 # ============================================================
 elif page == "Feedback":
@@ -797,103 +642,3 @@ elif page == "Feedback":
         )
 
 
-# ============================================================
-# DETALJVY
-# ============================================================
-elif page == "Detaljvy":
-    st.markdown(
-        '<div class="topbar"><h1>Detaljvy</h1>'
-        '<p>Fullständig information om en upphandling</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    proc_id = st.number_input("Upphandlings-ID", min_value=1, step=1, value=1)
-    proc = get_procurement(int(proc_id))
-
-    if proc:
-        s = proc.get("score") or 0
-        bc = bar_color(s)
-        url_html = (
-            f'<a href="{esc(proc["url"])}" target="_blank">{esc(proc["url"])}</a>'
-            if proc.get("url")
-            else '<span style="color:var(--text-3)">Ej tillgänglig</span>'
-        )
-        value_str = fmt_value(proc.get("estimated_value"), proc.get("currency")) or "Ej angivet"
-
-        st.markdown(f"""
-        <div class="dp">
-            <div class="dp-title">{esc(proc.get("title", ""))}</div>
-            <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
-                <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
-                <span class="badge {badge_cls(s)}">{s}/100</span>
-            </div>
-            <div class="score-track"><div class="score-fill" style="width:{s}%;background:{bc}"></div></div>
-            <div style="font-size:11px;color:var(--text-2);margin:6px 0 18px">{esc(proc.get("score_rationale") or "Ej scorad")}</div>
-            <div class="dp-row"><div class="dp-lbl">Köpare</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>
-            <div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>
-            <div class="dp-row"><div class="dp-lbl">CPV-koder</div><div class="dp-val">{esc(proc.get("cpv_codes") or "Ej angivet")}</div></div>
-            <div class="dp-row"><div class="dp-lbl">Förfarandetyp</div><div class="dp-val">{esc(proc.get("procedure_type") or "Ej angiven")}</div></div>
-            <div class="dp-row"><div class="dp-lbl">Publicerad</div><div class="dp-val">{esc(proc.get("published_date") or "Okänt")}</div></div>
-            <div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>
-            <div class="dp-row"><div class="dp-lbl">Uppskattat värde</div><div class="dp-val">{value_str}</div></div>
-            <div class="dp-row"><div class="dp-lbl">Status</div><div class="dp-val">{esc(proc.get("status") or "Okänd")}</div></div>
-            <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Länk</div><div class="dp-val">{url_html}</div></div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if proc.get("description"):
-            st.markdown(
-                f'<div class="dp" style="margin-top:12px">'
-                f'<div style="font-weight:700;font-size:12px;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Beskrivning</div>'
-                f'<div style="font-size:14px;line-height:1.7;color:var(--text-1)">{esc(proc["description"])}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-    else:
-        st.markdown(
-            '<div class="empty"><h3>Ingen upphandling hittad</h3><p>Prova ett annat ID.</p></div>',
-            unsafe_allow_html=True,
-        )
-
-
-# ============================================================
-# INSTÄLLNINGAR
-# ============================================================
-elif page == "Inställningar":
-    st.markdown(
-        '<div class="topbar"><h1>Inställningar</h1>'
-        '<p>Scoring-vikter och konfiguration</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    def render_kw_section(title: str, keywords: dict, accent: str):
-        tags = "".join(
-            f'<span class="kw">{esc(kw)} <span style="color:{accent};margin-left:4px">+{w}</span></span>'
-            for kw, w in keywords.items()
-        )
-        st.markdown(
-            f'<div class="dp" style="margin-bottom:12px">'
-            f'<div style="font-weight:700;font-size:12px;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">{title}</div>'
-            f'<div>{tags}</div></div>',
-            unsafe_allow_html=True,
-        )
-
-    render_kw_section("Hög vikt (20p)", HIGH_WEIGHT_KEYWORDS, "var(--orange-light)")
-    render_kw_section("Medel vikt (10p)", MEDIUM_WEIGHT_KEYWORDS, "var(--yellow)")
-    render_kw_section("Bas vikt (5p)", BASE_WEIGHT_KEYWORDS, "var(--text-1)")
-
-    buyers_html = "".join(f'<span class="kw">{esc(b)}</span>' for b in KNOWN_BUYERS)
-    st.markdown(
-        f'<div class="dp">'
-        f'<div style="font-weight:700;font-size:12px;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Kända köpare (bonus +10p)</div>'
-        f'<div>{buyers_html}</div></div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("---")
-    st.markdown(
-        '<div style="font-size:12px;color:var(--text-3);padding:8px 0">'
-        'Redigera <code>scorer.py</code> och kör <code>python run_scrapers.py --score-only</code> för att uppdatera scores.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
