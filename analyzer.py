@@ -414,17 +414,27 @@ def ai_prefilter_procurement(proc_id: int) -> dict | None:
         logger.warning("GEMINI_API_KEY saknas — hoppar över AI-prefilter")
         return None
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                {"role": "user", "parts": [{"text": PREFILTER_SYSTEM_PROMPT + "\n\n" + user_msg}]},
-            ],
-        )
-        raw_text = response.text or ""
-    except Exception as e:
-        logger.error("AI prefilter API error for proc %d: %s", proc_id, e)
-        return None
+    max_retries = 3
+    raw_text = ""
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[
+                    {"role": "user", "parts": [{"text": PREFILTER_SYSTEM_PROMPT + "\n\n" + user_msg}]},
+                ],
+            )
+            raw_text = response.text or ""
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < max_retries - 1:
+                wait = 10 * (attempt + 1)
+                logger.info("Rate limited on proc %d, waiting %ds (attempt %d/%d)", proc_id, wait, attempt + 1, max_retries)
+                print(f"  Rate limit — väntar {wait}s...")
+                time.sleep(wait)
+            else:
+                logger.error("AI prefilter API error for proc %d: %s", proc_id, e)
+                return None
 
     parsed = _parse_prefilter_json(raw_text)
     if parsed is None:
