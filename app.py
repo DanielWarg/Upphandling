@@ -551,7 +551,7 @@ elif page == "Sök & Filter":
         unsafe_allow_html=True,
     )
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         query = st.text_input("Fritext", placeholder="t.ex. realtidssystem")
     with c2:
@@ -560,12 +560,17 @@ elif page == "Sök & Filter":
         geography_filter = st.text_input("Region", placeholder="t.ex. Stockholm")
     with c4:
         score_range = st.slider("Score", 0, 100, (0, 100))
+    with c5:
+        ai_filter = st.selectbox("AI Relevans", ["Alla", "Relevant", "Inte relevant", "Ej bedömd"])
 
     source_val = "" if source_filter == "Alla" else source_filter
+    ai_val_map = {"Alla": "", "Relevant": "relevant", "Inte relevant": "irrelevant", "Ej bedömd": "unassessed"}
+    ai_val = ai_val_map[ai_filter]
     results = search_procurements(
         query=query, source=source_val,
         min_score=score_range[0], max_score=score_range[1],
         geography=geography_filter,
+        ai_relevance=ai_val,
     )
 
     st.markdown(f"**{len(results)}** resultat")

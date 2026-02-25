@@ -211,8 +211,12 @@ def search_procurements(
     min_score: int = 0,
     max_score: int = 100,
     geography: str = "",
+    ai_relevance: str = "",
 ) -> list[dict]:
-    """Search procurements with optional filters."""
+    """Search procurements with optional filters.
+
+    ai_relevance: "relevant", "irrelevant", "unassessed", or "" (all).
+    """
     conn = get_connection()
     sql = "SELECT * FROM procurements WHERE score BETWEEN ? AND ?"
     params: list = [min_score, max_score]
@@ -229,6 +233,13 @@ def search_procurements(
     if geography:
         sql += " AND geography LIKE ?"
         params.append(f"%{geography}%")
+
+    if ai_relevance == "relevant":
+        sql += " AND ai_relevance = 'relevant'"
+    elif ai_relevance == "irrelevant":
+        sql += " AND ai_relevance = 'irrelevant'"
+    elif ai_relevance == "unassessed":
+        sql += " AND ai_relevance IS NULL"
 
     sql += " ORDER BY score DESC, published_date DESC"
     rows = conn.execute(sql, params).fetchall()
