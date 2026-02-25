@@ -454,9 +454,11 @@ if page == "Kanban":
             unsafe_allow_html=True,
         )
     else:
-        high = [p for p in all_procs if (p.get("score") or 0) >= 60 and p.get("ai_relevance") != "irrelevant"]
-        med = [p for p in all_procs if 30 <= (p.get("score") or 0) < 60 and p.get("ai_relevance") != "irrelevant"]
-        low = [p for p in all_procs if (p.get("score") or 0) < 30 or p.get("ai_relevance") == "irrelevant"]
+        # Filter out AI-irrelevant procurements entirely
+        visible = [p for p in all_procs if p.get("ai_relevance") != "irrelevant"]
+        high = [p for p in visible if (p.get("score") or 0) >= 60]
+        med = [p for p in visible if 30 <= (p.get("score") or 0) < 60]
+        low = [p for p in visible if (p.get("score") or 0) < 30]
 
         col_h, col_m, col_l = st.columns(3)
 
@@ -536,7 +538,7 @@ if page == "Kanban":
 
         _render_column(col_h, "Hög prioritet", "#f97316", high)
         _render_column(col_m, "Medel", "#eab308", med)
-        _render_column(col_l, "Låg / Filtrerade", "#52525b", low, max_show=20)
+        _render_column(col_l, "Låg", "#52525b", low, max_show=20)
 
 
 # ============================================================

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -466,6 +467,8 @@ def ai_prefilter_all(threshold: int = 0, force: bool = False) -> int:
             checked += 1
             if not result["relevant"]:
                 filtered += 1
+            # Respect rate limits — pause between API calls
+            time.sleep(4)
 
     logger.info("AI prefilter: checked %d, filtered %d as irrelevant", checked, filtered)
     print(f"AI-prefilter: {checked} bedömda, {filtered} filtrerade som irrelevanta")
