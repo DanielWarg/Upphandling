@@ -412,7 +412,7 @@ def show_procurement_dialog(proc_id: int):
 if page == "Kanban":
     st.markdown(
         '<div class="topbar"><h1>Pipeline</h1>'
-        '<p>Upphandlingar sorterade efter lead score</p></div>',
+        '<p>Upphandlingar sorterade efter publiceringsdatum (nyast först)</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -432,8 +432,9 @@ if page == "Kanban":
             unsafe_allow_html=True,
         )
     else:
-        # Filter out AI-irrelevant procurements entirely
+        # Filter out AI-irrelevant procurements entirely, sort by newest published_date
         visible = [p for p in all_procs if p.get("ai_relevance") != "irrelevant"]
+        visible.sort(key=lambda p: p.get("published_date") or "", reverse=True)
         high = [p for p in visible if (p.get("score") or 0) >= 60]
         med = [p for p in visible if 30 <= (p.get("score") or 0) < 60]
         low = [p for p in visible if (p.get("score") or 0) < 30]
@@ -460,14 +461,17 @@ if page == "Kanban":
                     _title = esc((p.get("title") or "Utan titel")[:90])
                     _buyer = esc(p.get("buyer") or "")
                     _source = esc((p.get("source") or "").upper())
+                    _published = (p.get("published_date") or "")[:10]
                     _deadline = (p.get("deadline") or "")[:10]
                     _desc = esc((p.get("description") or "")[:120])
                     _value = fmt_value(p.get("estimated_value"), p.get("currency"))
                     _label = get_label(p["id"])
 
                     tags = f'<span class="tag tag-src">{_source}</span>'
+                    if _published:
+                        tags += f' <span class="tag tag-geo">{_published}</span>'
                     if _deadline:
-                        tags += f' <span class="tag tag-dl">{_deadline}</span>'
+                        tags += f' <span class="tag tag-dl">DL {_deadline}</span>'
                     if _value:
                         tags += f' <span class="tag tag-val">{_value}</span>'
 
@@ -554,7 +558,9 @@ elif page == "Sök & Filter":
     st.markdown(f"**{len(results)}** resultat")
 
     if results:
-        df = pd.DataFrame(results)[["id", "title", "buyer", "score", "source", "geography", "deadline"]]
+        df = pd.DataFrame(results)[["id", "title", "buyer", "score", "source", "published_date", "deadline", "geography"]]
+        df = df.rename(columns={"published_date": "Publicerad", "deadline": "Deadline"})
+        df = df.sort_values("Publicerad", ascending=False, na_position="last")
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.markdown(
