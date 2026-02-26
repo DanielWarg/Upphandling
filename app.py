@@ -432,12 +432,12 @@ if page == "Kanban":
             unsafe_allow_html=True,
         )
     else:
-        # Filter out AI-irrelevant procurements entirely, sort by newest published_date
-        visible = [p for p in all_procs if p.get("ai_relevance") != "irrelevant"]
+        # Filter: only scored (>0) and not AI-irrelevant, sort by newest
+        visible = [p for p in all_procs if (p.get("score") or 0) > 0 and p.get("ai_relevance") != "irrelevant"]
         visible.sort(key=lambda p: p.get("published_date") or "", reverse=True)
         high = [p for p in visible if (p.get("score") or 0) >= 60]
         med = [p for p in visible if 30 <= (p.get("score") or 0) < 60]
-        low = [p for p in visible if (p.get("score") or 0) < 30]
+        low = [p for p in visible if 1 <= (p.get("score") or 0) < 30]
 
         col_h, col_m, col_l = st.columns(3)
 
