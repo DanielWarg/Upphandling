@@ -25,16 +25,18 @@ FIELDS = [
     "estimated-value-cur-proc",
 ]
 
-# Smalare sökfrågor — kombinerar CPV med nyckelord för att minska brus
+# Sökfrågor — kombinerar CPV med nyckelord, bredare datumspann
 QUERIES = [
-    # Kollektivtrafik-IT specifika CPV-koder
-    "CY=SWE AND (classification-cpv=48813* OR classification-cpv=48814*) AND publication-date>20250901",
+    # Kollektivtrafik-IT specifika CPV-koder (passagerarinfo, realtid)
+    "CY=SWE AND (classification-cpv=48813* OR classification-cpv=48814*) AND publication-date>20240101",
     # IT-tjänster + transport-nyckelord i titel/beskrivning
-    'CY=SWE AND classification-cpv=72* AND (TD~"kollektivtrafik" OR TD~"realtid" OR TD~"trafikledning" OR TD~"passagerarinformation") AND publication-date>20250901',
+    'CY=SWE AND classification-cpv=72* AND (TD~"kollektivtrafik" OR TD~"realtid" OR TD~"trafikledning" OR TD~"passagerarinformation" OR TD~"biljettsystem" OR TD~"färdtjänst" OR TD~"serviceresor") AND publication-date>20240101',
     # Transporttjänster + system-nyckelord
-    'CY=SWE AND classification-cpv=60* AND (TD~"system" OR TD~"plattform" OR TD~"realtid" OR TD~"IT") AND publication-date>20250901',
+    'CY=SWE AND classification-cpv=60* AND (TD~"system" OR TD~"plattform" OR TD~"realtid" OR TD~"IT") AND publication-date>20240101',
     # Bred sökning — kända transportköpare + IT-CPV
-    'CY=SWE AND (classification-cpv=48* OR classification-cpv=72*) AND (BN~"trafik" OR BN~"Skånetrafiken" OR BN~"Västtrafik" OR BN~"Samtrafiken") AND publication-date>20250901',
+    'CY=SWE AND (classification-cpv=48* OR classification-cpv=72*) AND (BN~"trafik" OR BN~"Skånetrafiken" OR BN~"Västtrafik" OR BN~"Samtrafiken" OR BN~"Hallandstrafiken" OR BN~"Östgötatrafiken") AND publication-date>20240101',
+    # Anropsstyrd trafik / serviceresor — ofta Hogia-relevant
+    'CY=SWE AND (TD~"anropsstyrd" OR TD~"samordningscentral" OR TD~"beställningscentral" OR TD~"bokningssystem") AND (classification-cpv=48* OR classification-cpv=72* OR classification-cpv=60*) AND publication-date>20240101',
 ]
 
 PAGE_SIZE = 50

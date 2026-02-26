@@ -79,6 +79,42 @@ def init_db():
     conn.close()
 
 
+def deduplicate_procurements() -> int:
+    """Remove duplicate procurements within the same source based on title + buyer.
+
+    Keeps the row with the latest published_date, deletes the rest.
+    Returns number of deleted rows.
+    """
+    conn = get_connection()
+    # Find groups with duplicate (source, title, buyer) and pick the keeper (latest published_date, highest id as tiebreaker)
+    dupes = conn.execute("""
+        SELECT id FROM procurements
+        WHERE id NOT IN (
+            SELECT id FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY source, title, buyer
+                           ORDER BY published_date DESC, id DESC
+                       ) AS rn
+                FROM procurements
+            )
+            WHERE rn = 1
+        )
+    """).fetchall()
+
+    deleted = len(dupes)
+    if deleted > 0:
+        ids = [row["id"] for row in dupes]
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(f"DELETE FROM analyses WHERE procurement_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM labels WHERE procurement_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM procurements WHERE id IN ({placeholders})", ids)
+        conn.commit()
+
+    conn.close()
+    return deleted
+
+
 def upsert_procurement(data: dict) -> int:
     """Insert or update a procurement. Returns the row id."""
     conn = get_connection()
