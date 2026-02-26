@@ -2,7 +2,6 @@
 """CLI-skript för att köra alla scrapers, lagra resultat och scora leads."""
 
 import argparse
-import sys
 from db import init_db, upsert_procurement, get_all_procurements, update_score, deduplicate_procurements
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS

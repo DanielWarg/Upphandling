@@ -1,10 +1,8 @@
 """Streamlit dashboard — Upphandlingsbevakning, dark SaaS kanban."""
 
 import html as html_lib
-import json
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 
 from dotenv import load_dotenv
 

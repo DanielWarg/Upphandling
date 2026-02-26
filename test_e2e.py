@@ -3,7 +3,6 @@
 Tests the chain: DB init → upsert → scoring → search → stats → TED scraper → dedup.
 """
 
-import os
 import sqlite3
 import pytest
 from pathlib import Path
@@ -655,7 +654,7 @@ class TestAiPrefilter:
 
     def test_ai_prefilter_all_skips_assessed(self, use_test_db):
         """ai_prefilter_all should skip procurements that already have ai_relevance set."""
-        from db import upsert_procurement, update_score, update_ai_relevance, get_procurement
+        from db import upsert_procurement, update_score, update_ai_relevance
         upsert_procurement(SAMPLE_HIGH_SCORE)
         update_score(1, 80, "hög")
         update_ai_relevance(1, "relevant", "Redan bedömd")
