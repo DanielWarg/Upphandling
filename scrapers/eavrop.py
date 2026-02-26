@@ -53,15 +53,10 @@ class EAvropScraper(BaseScraper):
         except Exception as e:
             print(f"[e-Avrop] Fetch error: {e}")
 
-        # Klientsidigt relevansfilter
+        # Klientsidigt relevansfilter — returnera bara potentiellt relevanta
         filtered = [r for r in all_results if self._is_potentially_relevant(r)]
-        if filtered:
-            print(f"[e-Avrop] Fetched {len(all_results)} notices, {len(filtered)} potentiellt relevanta efter filtrering")
-            return filtered
-        else:
-            # Om inga matchar, returnera allt så vi inte tappar data
-            print(f"[e-Avrop] Fetched {len(all_results)} notices (inget matchade filtret, returnerar alla)")
-            return all_results
+        print(f"[e-Avrop] Fetched {len(all_results)} notices, {len(filtered)} potentiellt relevanta efter filtrering")
+        return filtered
 
     @staticmethod
     def _is_potentially_relevant(proc: dict) -> bool:

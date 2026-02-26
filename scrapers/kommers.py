@@ -21,6 +21,15 @@ SEARCH_FILTERS = {
     "SelectedContractType": "",  # Alla typer
 }
 
+# Klientsidigt relevansfilter — nyckelord som indikerar potentiell relevans
+RELEVANCE_KEYWORDS = [
+    "kollektivtrafik", "realtid", "trafikledning", "it-system",
+    "biljettsystem", "passagerarinformation", "72000000", "48000000",
+    "reseplanerare", "anropsstyrd", "färdtjänst", "serviceresor",
+    "trafikinformation", "hållplats", "realtidsinformation",
+    "trafikplanering", "biljett", "systemstöd", "fordons",
+]
+
 
 class KommersScraper(BaseScraper):
     name = "kommers"
@@ -58,8 +67,16 @@ class KommersScraper(BaseScraper):
         except Exception as e:
             print(f"[Kommers] Fetch error: {e}")
 
-        print(f"[Kommers] Fetched {len(results)} notices")
-        return results
+        # Klientsidigt relevansfilter — ta bort uppenbart irrelevanta
+        filtered = [r for r in results if self._is_potentially_relevant(r)]
+        print(f"[Kommers] Fetched {len(results)} notices, {len(filtered)} potentiellt relevanta efter filtrering")
+        return filtered
+
+    @staticmethod
+    def _is_potentially_relevant(proc: dict) -> bool:
+        """Check if a procurement is potentially relevant based on keywords."""
+        text = f"{proc.get('title', '')} {proc.get('description', '')} {proc.get('cpv_codes', '')}".lower()
+        return any(kw in text for kw in RELEVANCE_KEYWORDS)
 
     def _parse_listing(self, html: str) -> list[dict]:
         """Parse all notice rows from a listing page."""
