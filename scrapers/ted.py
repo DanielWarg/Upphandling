@@ -26,17 +26,18 @@ FIELDS = [
 ]
 
 # Sökfrågor — kombinerar CPV med nyckelord, bredare datumspann
+# TED v3 API: använd FT= för fulltext, organisation-name-buyer= för köpare (inte TD~/BN~)
 QUERIES = [
     # Kollektivtrafik-IT specifika CPV-koder (passagerarinfo, realtid)
     "CY=SWE AND (classification-cpv=48813* OR classification-cpv=48814*) AND publication-date>20240101",
-    # IT-tjänster + transport-nyckelord i titel/beskrivning
-    'CY=SWE AND classification-cpv=72* AND (TD~"kollektivtrafik" OR TD~"realtid" OR TD~"trafikledning" OR TD~"passagerarinformation" OR TD~"biljettsystem" OR TD~"färdtjänst" OR TD~"serviceresor") AND publication-date>20240101',
+    # IT-tjänster + transport-nyckelord (fulltext)
+    "CY=SWE AND classification-cpv=72* AND (FT=kollektivtrafik OR FT=realtid OR FT=trafikledning OR FT=passagerarinformation OR FT=biljettsystem OR FT=serviceresor) AND publication-date>20240101",
     # Transporttjänster + system-nyckelord
-    'CY=SWE AND classification-cpv=60* AND (TD~"system" OR TD~"plattform" OR TD~"realtid" OR TD~"IT") AND publication-date>20240101',
+    "CY=SWE AND classification-cpv=60* AND (FT=system OR FT=plattform OR FT=realtid) AND publication-date>20240101",
     # Bred sökning — kända transportköpare + IT-CPV
-    'CY=SWE AND (classification-cpv=48* OR classification-cpv=72*) AND (BN~"trafik" OR BN~"Skånetrafiken" OR BN~"Västtrafik" OR BN~"Samtrafiken" OR BN~"Hallandstrafiken" OR BN~"Östgötatrafiken") AND publication-date>20240101',
+    "CY=SWE AND (classification-cpv=48* OR classification-cpv=72*) AND (organisation-name-buyer=Skånetrafiken OR organisation-name-buyer=Västtrafik OR organisation-name-buyer=Samtrafiken OR organisation-name-buyer=Hallandstrafiken OR organisation-name-buyer=Östgötatrafiken) AND publication-date>20240101",
     # Anropsstyrd trafik / serviceresor — ofta Hogia-relevant
-    'CY=SWE AND (TD~"anropsstyrd" OR TD~"samordningscentral" OR TD~"beställningscentral" OR TD~"bokningssystem") AND (classification-cpv=48* OR classification-cpv=72* OR classification-cpv=60*) AND publication-date>20240101',
+    "CY=SWE AND (FT=anropsstyrd OR FT=samordningscentral OR FT=bokningssystem) AND (classification-cpv=48* OR classification-cpv=72* OR classification-cpv=60*) AND publication-date>20240101",
 ]
 
 PAGE_SIZE = 50
