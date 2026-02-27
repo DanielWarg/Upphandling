@@ -11,7 +11,7 @@ from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
 
 
-def run(sources: list[str] | None = None, skip_scoring: bool = False, ollama_model: str = "ministral-3-14b", skip_analysis: bool = False):
+def run(sources: list[str] | None = None, skip_scoring: bool = False, ollama_model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", skip_analysis: bool = False):
     """Kör scrapers och scora resultat."""
     init_db()
 
@@ -83,14 +83,14 @@ def score_all():
     print(f"Scorade {len(procurements)} upphandlingar")
 
 
-def run_ai_prefilter(ollama_model: str = "ministral-3-14b"):
+def run_ai_prefilter(ollama_model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf"):
     """Run local AI prefilter on procurements that passed sector gate (score > 0)."""
     print(f"\nKör lokal AI-prefilter (Ollama, modell: {ollama_model}) på gate-passerade upphandlingar...")
     from analyzer import ollama_prefilter_all
     ollama_prefilter_all(model=ollama_model, min_score=1)
 
 
-def run_deep_analysis(min_score: int = 1, force: bool = False, ollama_model: str = "ministral-3-14b"):
+def run_deep_analysis(min_score: int = 1, force: bool = False, ollama_model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf"):
     """Run Ollama deep analysis on all AI-relevant procurements."""
     print(f"\nKör Ollama-djupanalys (modell: {ollama_model}) på relevanta upphandlingar...")
     from analyzer import analyze_all_relevant
@@ -177,8 +177,8 @@ def main():
     )
     parser.add_argument(
         "--ollama-model",
-        default="ministral-3-14b",
-        help="LLM-modell för AI-prefilter och djupanalys (standard: ministral-3-14b)",
+        default="Ministral-3-14B-Instruct-2512-Q4_K_M.gguf",
+        help="LLM-modell för AI-prefilter och djupanalys (standard: Ministral-3-14B-Instruct-2512-Q4_K_M.gguf)",
     )
     parser.add_argument(
         "--skip-analysis",

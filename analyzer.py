@@ -1,4 +1,4 @@
-"""AI-driven procurement analysis using local Ollama models."""
+"""AI-driven procurement analysis using Ministral 3 14B via llama-server."""
 
 from __future__ import annotations
 
@@ -6,12 +6,10 @@ import json
 import logging
 import os
 import re
-import time
 import xml.etree.ElementTree as ET
 
 import httpx
 from dotenv import load_dotenv
-from google import genai
 
 from db import get_procurement, get_analysis, save_analysis, get_all_procurements, update_ai_relevance
 
@@ -219,14 +217,6 @@ def _extract_sections_by_keys(raw_text: str) -> dict | None:
     return result
 
 
-def get_client() -> genai.Client:
-    """Create a Gemini client from GEMINI_API_KEY env var."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY saknas. Sätt den i .env-filen.")
-    return genai.Client(api_key=api_key)
-
-
 # ---------------------------------------------------------------------------
 # TED full notice text
 # ---------------------------------------------------------------------------
@@ -266,7 +256,7 @@ def fetch_full_notice_text(pub_number: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Main analysis function
 # ---------------------------------------------------------------------------
-def analyze_procurement(procurement_id: int, force: bool = False, model: str = "ministral-3-14b") -> dict | None:
+def analyze_procurement(procurement_id: int, force: bool = False, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf") -> dict | None:
     """Run AI analysis on a procurement using local Ollama. Returns analysis dict or None on error.
 
     Uses cached result if available unless force=True.
@@ -346,7 +336,7 @@ def analyze_procurement(procurement_id: int, force: bool = False, model: str = "
     return get_analysis(procurement_id)
 
 
-def analyze_all_relevant(min_score: int = 1, force: bool = False, model: str = "ministral-3-14b") -> int:
+def analyze_all_relevant(min_score: int = 1, force: bool = False, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf") -> int:
     """Run Ollama deep analysis on all relevant procurements.
 
     Processes procurements with score >= min_score and ai_relevance == "relevant".
@@ -477,7 +467,7 @@ ANALYSIS_TOOL = {
 }
 
 
-def _call_ollama(system_prompt: str, user_msg: str, model: str = "ministral-3-14b", json_mode: bool = False) -> str | None:
+def _call_ollama(system_prompt: str, user_msg: str, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", json_mode: bool = False) -> str | None:
     """Call local LLM via OpenAI-compatible API. Returns response text or None."""
     try:
         payload = {
@@ -502,7 +492,7 @@ def _call_ollama(system_prompt: str, user_msg: str, model: str = "ministral-3-14
         return None
 
 
-def _call_ollama_tools(system_prompt: str, user_msg: str, model: str = "ministral-3-14b") -> dict | None:
+def _call_ollama_tools(system_prompt: str, user_msg: str, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf") -> dict | None:
     """Call local LLM with function calling to get structured JSON output.
 
     Returns parsed dict with the 4 analysis keys, or None on error.
@@ -539,7 +529,7 @@ def _call_ollama_tools(system_prompt: str, user_msg: str, model: str = "ministra
         return None
 
 
-def ollama_prefilter_procurement(proc_id: int, model: str = "ministral-3-14b") -> dict | None:
+def ollama_prefilter_procurement(proc_id: int, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf") -> dict | None:
     """Run AI relevance check on a single procurement using local Ollama. Returns {'relevant': bool, 'reasoning': str} or None."""
     proc = get_procurement(proc_id)
     if not proc:
@@ -567,7 +557,7 @@ def ollama_prefilter_procurement(proc_id: int, model: str = "ministral-3-14b") -
     return parsed
 
 
-def ollama_prefilter_all(model: str = "ministral-3-14b", force: bool = False, min_score: int = 1) -> int:
+def ollama_prefilter_all(model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", force: bool = False, min_score: int = 1) -> int:
     """Run AI prefilter on procurements using local Ollama.
 
     Only processes procurements with score >= min_score (default 1, i.e. those
@@ -602,91 +592,3 @@ def ollama_prefilter_all(model: str = "ministral-3-14b", force: bool = False, mi
     return filtered
 
 
-def ai_prefilter_procurement(proc_id: int) -> dict | None:
-    """Run AI relevance check on a single procurement. Returns {'relevant': bool, 'reasoning': str} or None."""
-    proc = get_procurement(proc_id)
-    if not proc:
-        return None
-
-    title = proc.get("title") or ""
-    buyer = proc.get("buyer") or ""
-    cpv = proc.get("cpv_codes") or ""
-    desc = (proc.get("description") or "")[:300]
-
-    user_msg = f"Titel: {title}\nKöpare: {buyer}\nCPV: {cpv}\nBeskrivning: {desc}"
-
-    try:
-        client = get_client()
-    except ValueError:
-        logger.warning("GEMINI_API_KEY saknas — hoppar över AI-prefilter")
-        return None
-
-    max_retries = 3
-    raw_text = ""
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[
-                    {"role": "user", "parts": [{"text": PREFILTER_SYSTEM_PROMPT + "\n\n" + user_msg}]},
-                ],
-            )
-            raw_text = response.text or ""
-            break
-        except Exception as e:
-            if "429" in str(e) and attempt < max_retries - 1:
-                wait = 10 * (attempt + 1)
-                logger.info("Rate limited on proc %d, waiting %ds (attempt %d/%d)", proc_id, wait, attempt + 1, max_retries)
-                print(f"  Rate limit — väntar {wait}s...")
-                time.sleep(wait)
-            else:
-                logger.error("AI prefilter API error for proc %d: %s", proc_id, e)
-                return None
-
-    parsed = _parse_prefilter_json(raw_text)
-    if parsed is None:
-        logger.warning("AI prefilter JSON parse failed for proc %d: %s", proc_id, raw_text[:200])
-        return None
-
-    relevance = "relevant" if parsed["relevant"] else "irrelevant"
-    update_ai_relevance(proc_id, relevance, parsed["reasoning"])
-
-    return parsed
-
-
-def ai_prefilter_all(threshold: int = 0, force: bool = False) -> int:
-    """Run AI prefilter on all procurements with score >= threshold.
-
-    Skips already-assessed procurements unless force=True.
-    Returns number of procurements filtered as irrelevant.
-    """
-    try:
-        get_client()
-    except ValueError:
-        logger.warning("GEMINI_API_KEY saknas — hoppar över AI-prefilter")
-        return 0
-
-    procs = get_all_procurements()
-    filtered = 0
-    checked = 0
-
-    for p in procs:
-        score = p.get("score") or 0
-        if score < threshold:
-            continue
-
-        # Skip already assessed unless force
-        if not force and p.get("ai_relevance") is not None:
-            continue
-
-        result = ai_prefilter_procurement(p["id"])
-        if result is not None:
-            checked += 1
-            if not result["relevant"]:
-                filtered += 1
-            # Respect rate limits — pause between API calls
-            time.sleep(4)
-
-    logger.info("AI prefilter: checked %d, filtered %d as irrelevant", checked, filtered)
-    print(f"AI-prefilter: {checked} bedömda, {filtered} filtrerade som irrelevanta")
-    return filtered

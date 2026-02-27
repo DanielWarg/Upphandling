@@ -1,7 +1,7 @@
 # Upphandlingsbevakning — Fas2 Säljstöd
 
 ## Projekt
-Svenskt verktyg för att bevaka kollektivtrafikupphandlingar åt Hogia. Scrapar TED, Mercell, KommersAnnons, e-Avrop och scorar leads. Fas2 utökar med flerannvändarstöd, pipeline-hantering, kundkonton, samarbete och notiser för Hogias KAM-team (3 KAM + 1 säljchef).
+Svenskt verktyg för att bevaka upphandlingar inom ledarskap, utbildning och organisationsutveckling åt HAST Utveckling. Scrapar TED, Mercell, KommersAnnons, e-Avrop och scorar leads. Fas2 utökar med flerannvändarstöd, pipeline-hantering, kundkonton, samarbete och notiser för HAST:s säljteam (3 KAM + 1 säljchef).
 
 ## Teknikstack
 - Python 3.11+
