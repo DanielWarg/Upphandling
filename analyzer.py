@@ -22,75 +22,64 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # Hogia context
 # ---------------------------------------------------------------------------
-HOGIA_CONTEXT = """
-Hogia Public Transport Systems (Hogia PTS) levererar IT-lösningar för kollektivtrafik i Norden.
+HAST_CONTEXT = """
+HAST Utveckling erbjuder konsulttjänster inom ledarskap, utbildning och organisationsutveckling.
 
-PRODUKTER (detalj):
-- PubTrans: Centralt driftsstöd och trafikledningssystem. Hanterar realtidsövervakning av fordonsflotta, avvikelsehantering, trafikantinformation vid störning, och koppling mot AVL (Automatic Vehicle Location). Marknadsledande i Norden.
-- Realtidsinformation: Passagerarinformation i realtid — hållplatsskyltar (DPI), appar, webb, skärmar ombord. Stödjer SIRI och GTFS-RT.
-- Reseplanerare: Multimodal reseplanering med stöd för NeTEx och GTFS. Integration med nationella reseplaneraren (Samtrafikens ResRobot).
-- Beordringssystem: Beordring och bemanning av förare, tjänsteplanering, turlistor. Optimering av personalresurser.
-- Anropsstyrd trafik: Komplett lösning för serviceresor, färdtjänst, sjukresor, skolskjuts. Bokningssystem, optimering, samordningscentral, fordonskommunikation.
+TJÄNSTEOMRÅDEN:
+- Ledarskapsutbildning: UGL, UL, utvecklande ledarskap, chefsprogram, ledarskapsprogram
+- Chefsutveckling: Executive coaching, chefscoaching, chefshandledning, individuell utveckling
+- Teamutveckling: Grupputveckling, ledningsgruppsutveckling, teambuilding, gruppdynamik
+- Organisationsutveckling: Förändringsledning, organisationsförändring, kulturförändring, arbetskultur
+- Kommunikation: Kommunikationsutbildning, kommunikationsträning, feedbackkultur, svåra samtal
+- HR-stöd: Stresshantering, konflikthantering, medarbetarutveckling, personaleffektivitet
+- Seminarier & workshops: Inspirationsföreläsningar, kunskapsseminarier, konferensinsatser
 
-STANDARDER OCH PROTOKOLL:
-- NeTEx (Nordic NeTEx Profile) — hållplats- och tidtabelldata (Hogia stödjer fullt)
-- SIRI — realtidsinformation (kärnan i PubTrans)
-- GTFS / GTFS-RT — öppna resedata (export/import)
-- ITxPT — fordons-IT-arkitektur (ombordssystem, FMS)
-- BoB (Biljett och Betalning) — integration mot biljettsystem
-- BODS / EU-regulatorik — öppna data-krav
-
-REFERENSKUNDER (med leveransdetalj):
-- Västtrafik: PubTrans, realtid, reseplanerare — en av Sveriges största RKM
-- Skånetrafiken: PubTrans, realtid, anropsstyrd trafik — komplett leverans
-- Svealandstrafiken/VL (Västmanland): PubTrans, realtid
-- Länstrafiken Kronoberg: PubTrans, beordring
-- Region Uppsala: Anropsstyrd trafik, serviceresor
-- Hallandstrafiken: PubTrans, realtid
+LEVERANSFORMAT:
+- Ramavtal med offentlig sektor (regioner, kommuner, myndigheter)
+- Skräddarsydda uppdrag (behovsanalys → design → genomförande → uppföljning)
+- Certifierade UGL/UL-handledare
+- Både fysiskt och digitalt genomförande
+- Enskilda insatser och längre utvecklingsprogram
 
 STYRKOR I UPPHANDLINGSKONTEXT:
-- 30+ års erfarenhet av svensk kollektivtrafik-IT
-- Komplett produktportfölj — kan leverera helhetsåtagande
-- Beprövade integrationer mot befintliga biljettsystem, fordons-IT
-- Stark på standarder (NeTEx, SIRI, GTFS) — ofta krav i upphandlingar
-- Nordisk marknadsledare inom PubTrans/trafikledning
-- Lokal support och förvaltning — svensk organisation
-- Hög kundnöjdhet och långa kundrelationer
+- Djup kompetens inom ledarskap och organisationsutveckling
+- Certifierade handledare (UGL, UL, ICF-coaching)
+- Erfarenhet av offentlig sektor — förstår LOU/LUF
+- Flexibel leverans — kan skala upp/ner efter behov
+- Kombination av utbildning + coaching + handledning i samma avtal
 
-SVAGHETER/GAP ATT VARA MEDVETEN OM:
-- Biljettsystem: Hogia har integration men inget eget biljettsystem (samarbetar med partners)
-- Ren hårdvara (fordon, skyltar): Hogia levererar mjukvara, inte hårdvara
-- Internationellt: Främst nordiskt fokus, begränsade internationella referenser
+TYPISKA KUNDER:
+- Regioner (Region Stockholm, Region Halland, Region Skåne etc.)
+- Kommuner (alla storlekar)
+- Statliga myndigheter (Polisen, Skatteverket, Sida, Försvarsmakten etc.)
+- Offentliga bolag och organisationer
 """
 
 # ---------------------------------------------------------------------------
 # Prompts
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """Du är en senior upphandlingsrådgivare och expert på svensk offentlig upphandling, specialiserad på kollektivtrafik-IT. Du arbetar för Hogia Public Transport Systems.
+SYSTEM_PROMPT = """Du är en senior upphandlingsrådgivare och expert på svensk offentlig upphandling, specialiserad på utbildning, ledarskap och organisationsutveckling. Du arbetar för HAST Utveckling.
 
 DIN EXPERTIS OMFATTAR:
-- Lagen om offentlig upphandling (LOU) och LUF (försörjningssektorn — gäller kollektivtrafik)
-- Upphandlingsförfaranden: öppet, selektivt, förhandlat med/utan föregående annonsering, konkurrenspräglad dialog, innovationspartnerskap
+- Lagen om offentlig upphandling (LOU)
+- Upphandlingsförfaranden: öppet, selektivt, förhandlat, förenklat
 - Utvärderingsmodeller: bästa pris-kvalitetsförhållande, lägsta pris, fast pris med kvalitetstävlan
 - Kvalificeringskrav vs tilldelningskriterier (ska-krav vs bör-krav)
 - Ramavtal (enskild leverantör, rangordning, förnyad konkurrensutsättning)
-- Överprövning och avtalsspärr (10 dagars regel)
-- SKI-ramavtal och Kammarkollegiets ramavtal (Programvaror & Tjänster, IT-drift)
 - ESPD (European Single Procurement Document)
-- Dynamiska inköpssystem (DIS)
-- Branschspecifikt: RKM-upphandlingar, Samtrafikens standarder, kollektivtrafiklagen
+- Branschspecifikt: utbildningstjänster, konsulttjänster, HR-relaterade ramavtal
 
 Svara ALLTID på svenska. Var konkret och handlingsorienterad — inga generella platityder.
 
 Du ska returnera ett JSON-objekt med exakt dessa fyra nycklar:
 - "kravsammanfattning": Sammanfattning av krav och scope (markdown)
-- "matchningsanalys": Hur väl Hogias produkter matchar kraven (markdown)
+- "matchningsanalys": Hur väl HAST:s tjänster matchar kraven (markdown)
 - "prisstrategi": Rekommenderad prisstrategi och affärsmodell (markdown)
 - "anbudshjalp": Konkreta tips för att skriva ett starkt anbud (markdown)
 
 Returnera BARA JSON-objektet, ingen annan text runtomkring."""
 
-USER_PROMPT_TEMPLATE = """Analysera denna upphandling åt Hogia Public Transport Systems:
+USER_PROMPT_TEMPLATE = """Analysera denna upphandling åt HAST Utveckling:
 
 ## Upphandlingsdata
 - Titel: {title}
@@ -107,43 +96,41 @@ USER_PROMPT_TEMPLATE = """Analysera denna upphandling åt Hogia Public Transport
 
 {full_text_section}
 
-## Om Hogia
-{hogia_context}
+## Om HAST Utveckling
+{hast_context}
 
 ## Analysera enligt följande struktur:
 
 ### 1. Kravsammanfattning
-- Vad upphandlas exakt? (system, tjänst, integration, drift?)
-- Scope och volym (antal fordon, hållplatser, resenärer, kommuner?)
-- Avtalsperiod och tidsplan (implementering, optionsår)
+- Vad upphandlas exakt? (utbildning, coaching, konsulttjänst, ramavtal?)
+- Scope och volym (antal deltagare, avrop, kommuner/enheter?)
+- Avtalsperiod och tidsplan (start, optionsår)
 - Ska-krav (obligatoriska) vs bör-krav (mervärderade)
-- Tekniska krav (standarder, integrationer, prestanda)
-- Organisatoriska krav (bemanning, support, SLA)
-- OBS: Om detta INTE handlar om IT/system utan om ren trafikering (köra bussar), säg det tydligt.
+- Krav på leverantören (certifieringar, erfarenhet, kapacitet)
+- OBS: Om detta INTE handlar om ledarskap/utbildning/organisationsutveckling, säg det tydligt.
 
 ### 2. Matchningsanalys
-- Gå igenom VARJE Hogia-produkt (PubTrans, Realtid, Reseplanerare, Beordring, Anropsstyrd trafik) och bedöm relevans
-- Identifiera vilka krav Hogia täcker direkt, vilka som kräver anpassning, och vilka gap som finns
-- Bedöm om Hogia behöver underleverantörer/partners för delar
+- Gå igenom HAST:s tjänsteområden (ledarskapsutbildning, coaching, teamutveckling, organisationsutveckling, kommunikation, HR-stöd) och bedöm relevans
+- Identifiera vilka krav HAST täcker direkt och vilka gap som finns
+- Bedöm om HAST behöver partners/underleverantörer för delar
 - Ge en tydlig matchningsgrad: **Hög** (>70% täckning), **Medel** (40-70%), **Låg** (<40%), eller **Ej relevant** (fel domän)
 - Lista konkreta styrkor och svagheter mot just denna upphandlings krav
 
 ### 3. Prisstrategi
 - Rekommendera prismodell baserat på upphandlingens karaktär:
-  - Licensmodell (per fordon, per hållplats, per användare, flat fee)
-  - SaaS vs on-premise
-  - Implementeringskostnad + löpande förvaltning
-  - Eventuella optioner och tilläggsmoduler
-- Bedöm prisnivå relativt marknaden om möjligt
-- Identifiera vad som driver kostnaden (integrationer, datamigration, utbildning)
+  - Timpris vs paketpris vs fast pris per utbildningstillfälle
+  - Pris per deltagare vs per grupp
+  - Rabattstruktur vid större volymer
+- Bedöm prisnivå relativt marknaden (konsultarvoden för ledarskapsutbildning)
+- Identifiera vad som driver kostnaden (skräddarsytt vs standardprogram, antal tillfällen, resor)
 - Tips kring prissättning givet utvärderingsmodellen (om känd)
 
 ### 4. Anbudshjälp
-- Vilka av Hogias referenskunder bör lyftas och varför?
-- Konkreta differentierande argument mot konkurrenter (Hastus, Trapeze, IVU, Remix, etc.)
-- Vilka risker bör adresseras proaktivt i anbudet?
-- Tips för kvalitetsdelen: hur beskriva implementation, projektorganisation, stöd vid driftsättning
-- Formella saker att tänka på (ESPD, referenskrav, ekonomisk kapacitet, yrkesmässig kapacitet)
+- Vilka styrkor bör HAST lyfta i anbudet?
+- Vilka certifieringar och erfarenheter är relevanta (UGL, UL, ICF)?
+- Vilka risker bör adresseras proaktivt?
+- Tips för kvalitetsdelen: hur beskriva metodik, genomförande, uppföljning
+- Formella saker att tänka på (ESPD, referenskrav, kapacitetskrav)
 
 Svara med ett JSON-objekt."""
 
@@ -319,7 +306,7 @@ def analyze_procurement(procurement_id: int, force: bool = False, model: str = "
         source=proc.get("source") or "Okänd",
         description=proc.get("description") or "Ingen beskrivning tillgänglig.",
         full_text_section=full_text_section,
-        hogia_context=HOGIA_CONTEXT,
+        hast_context=HAST_CONTEXT,
     )
 
     # Try function calling first (structured output), fall back to text + parse
@@ -463,7 +450,7 @@ ANALYSIS_TOOL = {
     "type": "function",
     "function": {
         "name": "submit_analysis",
-        "description": "Lämna in upphandlingsanalys med fyra sektioner",
+        "description": "Lämna in HAST-upphandlingsanalys med fyra sektioner",
         "parameters": {
             "type": "object",
             "properties": {
