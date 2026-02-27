@@ -1,15 +1,11 @@
-"""Streamlit dashboard — Upphandlingsbevakning, dark SaaS kanban."""
+"""Streamlit dashboard — Upphandlingsbevakning, dark SaaS with multi-user pipeline."""
 
-import html as html_lib
 import streamlit as st
-import pandas as pd
 
 from dotenv import load_dotenv
 
-from db import (
-    init_db, get_all_procurements, search_procurements, get_procurement,
-    get_stats, get_analysis, save_label, get_label, get_all_labels, get_label_stats,
-)
+from db import init_db, get_unread_notification_count, get_unread_count
+from auth import check_auth, get_current_user, render_sidebar_user
 
 load_dotenv()
 
@@ -74,12 +70,12 @@ section[data-testid="stSidebar"] {
 }
 section[data-testid="stSidebar"] > div { overflow-y: auto; }
 section[data-testid="stSidebar"] * { color: var(--text-0) !important; }
-section[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
-section[data-testid="stSidebar"] .stRadio label {
-    padding: 10px 16px !important; border-radius: var(--r-sm) !important;
-    transition: background 0.15s !important; cursor: pointer !important;
+
+/* --- Navigation section headers --- */
+section[data-testid="stSidebar"] [data-testid="stSidebarNavSectionHeader"] {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-2) !important;
 }
-section[data-testid="stSidebar"] .stRadio label:hover { background: var(--bg-3) !important; }
 
 /* --- Inputs --- */
 .stTextInput input, .stNumberInput input, .stSelectbox select,
@@ -89,6 +85,16 @@ div[data-baseweb="select"] > div {
 }
 .stTextInput input:focus, .stNumberInput input:focus {
     border-color: var(--orange) !important; box-shadow: 0 0 0 1px var(--orange) !important;
+}
+/* --- Password toggle icon fix --- */
+.stTextInput input[type="password"], .stTextInput input[type="text"] {
+    padding-right: 40px !important;
+}
+button[kind="passwordToggle"], .stTextInput button {
+    color: var(--text-2) !important;
+    background: transparent !important;
+    border: none !important;
+    right: 4px !important;
 }
 
 /* --- Metrics --- */
@@ -198,6 +204,63 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
 .empty h3 { font-size: 16px; font-weight: 600; color: var(--text-1); margin: 0 0 4px; }
 .empty p { font-size: 13px; color: var(--text-2); margin: 0; }
 
+/* --- Dashboard widgets --- */
+.mcr-header { font-size:18px; font-weight:800; color:var(--text-0); letter-spacing:-0.3px; margin-bottom:10px; }
+.mcr-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; height:calc(100vh - 180px); }
+.widget { background:var(--bg-1); border:1px solid var(--border); border-radius:var(--r); overflow:hidden; position:relative; display:flex; flex-direction:column; min-height:0; }
+.widget::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg, var(--orange), transparent 60%); z-index:1; pointer-events:none; }
+.widget-head { padding:8px 12px; border-bottom:1px solid var(--border-subtle); font-weight:700; font-size:10px; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-2); display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
+.wh-badge { font-size:10px; font-weight:700; color:var(--orange-light); background:var(--orange-dim); padding:2px 8px; border-radius:10px; border:1px solid rgba(249,115,22,0.2); text-transform:none; letter-spacing:0; }
+.widget-body { padding:4px 8px; flex:1; min-height:0; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--bg-3) transparent; }
+.widget-body::-webkit-scrollbar { width:5px; }
+.widget-body::-webkit-scrollbar-track { background:transparent; }
+.widget-body::-webkit-scrollbar-thumb { background:var(--bg-3); border-radius:3px; }
+.widget-empty { padding:28px 16px; text-align:center; color:var(--text-2); font-size:12px; }
+
+/* Procurement mini-cards */
+.pcard { background:var(--bg-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:7px 10px; margin-bottom:4px; position:relative; overflow:hidden; transition:all .15s ease; }
+.pcard:hover { background:var(--bg-hover); border-color:#3f3f46; box-shadow:0 4px 12px rgba(0,0,0,0.3); }
+.pcard::before { content:''; position:absolute; top:0; left:0; bottom:0; width:3px; border-radius:3px 0 0 3px; }
+.pcard-high::before { background:var(--orange); }
+.pcard-med::before { background:var(--yellow); }
+.pcard-low::before { background:var(--border); opacity:0.5; }
+.pcard-top { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.pcard-score { min-width:30px; height:20px; border-radius:4px; font-size:10px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.pcard-title { font-weight:600; font-size:12px; color:var(--text-0); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.pcard-meta { display:flex; align-items:center; gap:6px; }
+.pcard-tag { display:inline-block; padding:1px 5px; border-radius:3px; font-size:9px; font-weight:700; text-transform:uppercase; }
+
+/* Mini calendar */
+.mcal { width:100%; border-collapse:collapse; table-layout:fixed; }
+.mcal-title { font-size:13px; font-weight:700; color:var(--text-0); text-align:center; padding:4px 0 8px; letter-spacing:0.3px; }
+.mcal th { font-size:10px; font-weight:600; color:var(--text-2); padding:3px 0; text-align:center; }
+.mcal td { text-align:center; padding:1px; vertical-align:top; }
+.mcal-day { width:26px; height:26px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:500; color:var(--text-1); position:relative; }
+.mcal-today { background:var(--orange-dim); color:var(--orange-light); font-weight:700; box-shadow:0 0 0 1px rgba(249,115,22,0.3); }
+.mcal-has-event { font-weight:600; color:var(--text-0); }
+.mcal-dot { position:absolute; bottom:1px; left:50%; transform:translateX(-50%); width:4px; height:4px; border-radius:50%; }
+.mcal-event-row { display:flex; align-items:center; gap:8px; padding:3px 8px; font-size:11px; color:var(--text-0); }
+.mcal-event-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.mcal-event-date { font-size:10px; color:var(--text-2); min-width:68px; font-weight:600; }
+.mcal-event-title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Notification cards */
+.ncard { background:var(--bg-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:7px 10px; margin-bottom:4px; position:relative; overflow:hidden; transition:background .15s ease; }
+.ncard:hover { background:var(--bg-hover); }
+.ncard::before { content:''; position:absolute; top:0; left:0; bottom:0; width:3px; border-radius:3px 0 0 3px; }
+.ncard-top { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+.ncard-type { font-size:9px; font-weight:700; text-transform:uppercase; padding:1px 6px; border-radius:3px; letter-spacing:0.3px; }
+.ncard-title { font-size:12px; font-weight:600; color:var(--text-0); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Chat cards */
+.chatcard { background:var(--bg-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:7px 10px; margin-bottom:4px; display:flex; align-items:center; gap:8px; transition:background .15s ease; }
+.chatcard:hover { background:var(--bg-hover); }
+.chat-avatar { width:30px; height:30px; border-radius:50%; background:var(--orange-dim); border:1px solid rgba(249,115,22,0.2); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:var(--orange-light); flex-shrink:0; }
+.chat-content { flex:1; min-width:0; }
+.chat-name { font-size:12px; font-weight:600; color:var(--text-0); }
+.chat-preview { font-size:11px; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
+.chat-time { font-size:10px; color:var(--text-2); flex-shrink:0; }
+
 hr { border-color: var(--border) !important; }
 .stDataFrame { border-radius: var(--r) !important; overflow: hidden !important; }
 
@@ -208,6 +271,19 @@ hr { border-color: var(--border) !important; }
 """
 
 st.markdown(THEME_CSS, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Auth gate — nothing renders without login
+# ---------------------------------------------------------------------------
+if not check_auth():
+    st.stop()
+
+current_user = get_current_user()
+if not current_user:
+    st.error("Kunde inte hämta användarinformation.")
+    st.stop()
+
+st.session_state["current_user"] = current_user
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -221,428 +297,37 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-page = st.sidebar.radio(
-    "Navigation",
-    ["Kanban", "Sök & Filter", "Feedback"],
-    label_visibility="collapsed",
-)
+render_sidebar_user()
 
+# Notification indicators
+try:
+    notif_count = get_unread_notification_count(current_user["username"])
+    msg_count = get_unread_count(current_user["username"])
+    if notif_count > 0 or msg_count > 0:
+        badge_text = []
+        if notif_count > 0:
+            badge_text.append(f"{notif_count} notiser")
+        if msg_count > 0:
+            badge_text.append(f"{msg_count} meddelanden")
+        st.sidebar.markdown(
+            f'<div style="padding:8px 16px;margin-bottom:8px;background:var(--orange-dim);'
+            f'border:1px solid rgba(249,115,22,0.2);border-radius:var(--r-sm);font-size:11px;color:var(--orange-light)">'
+            f'{", ".join(badge_text)} olästa</div>',
+            unsafe_allow_html=True,
+        )
+except Exception:
+    pass
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Navigation — 2 pages
 # ---------------------------------------------------------------------------
-def esc(s: str) -> str:
-    return html_lib.escape(str(s)) if s else ""
+from pages.my_page import render_my_page
+from pages.procurements import render_procurements
 
+nav_pages = [
+    st.Page(render_my_page, title="Min sida", default=True, url_path=""),
+    st.Page(render_procurements, title="Upphandlingar", url_path="upphandlingar"),
+]
 
-def badge_cls(score: int) -> str:
-    if score >= 60: return "badge-h"
-    if score >= 30: return "badge-m"
-    return "badge-l"
-
-
-def card_cls(score: int) -> str:
-    if score >= 60: return "card-high"
-    if score >= 30: return "card-med"
-    return "card-low"
-
-
-def bar_color(score: int) -> str:
-    if score >= 60: return "var(--orange)"
-    if score >= 30: return "var(--yellow)"
-    return "#3f3f46"
-
-
-def fmt_value(val, cur) -> str:
-    if not val:
-        return ""
-    try:
-        v = float(val)
-        if v >= 1_000_000:
-            return f"{v/1_000_000:.1f}M {cur or 'SEK'}"
-        if v >= 1_000:
-            return f"{v/1_000:.0f}k {cur or 'SEK'}"
-        return f"{v:.0f} {cur or 'SEK'}"
-    except (ValueError, TypeError):
-        return ""
-
-
-@st.dialog("Upphandling", width="large")
-def show_procurement_dialog(proc_id: int):
-    """Native Streamlit dialog with details, feedback and AI analysis."""
-    proc = get_procurement(proc_id)
-    if not proc:
-        st.error("Upphandlingen hittades inte.")
-        return
-
-    s = proc.get("score") or 0
-    bc = bar_color(s)
-    value_str = fmt_value(proc.get("estimated_value"), proc.get("currency")) or "Ej angivet"
-    url_html = (
-        f'<a href="{esc(proc["url"])}" target="_blank">{esc(proc["url"])}</a>'
-        if proc.get("url")
-        else '<span style="color:var(--text-3)">Ej tillgänglig</span>'
-    )
-
-    st.markdown(f"""
-    <div class="dp">
-        <div class="dp-title">{esc(proc.get("title", ""))}</div>
-        <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
-            <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
-            <span class="badge {badge_cls(s)}">{s}/100</span>
-        </div>
-        <div class="score-track"><div class="score-fill" style="width:{s}%;background:{bc}"></div></div>
-        <div style="font-size:11px;color:var(--text-2);margin:6px 0 18px">{esc(proc.get("score_rationale") or "Ej scorad")}</div>
-        <div class="dp-row"><div class="dp-lbl">Köpare</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">CPV-koder</div><div class="dp-val">{esc(proc.get("cpv_codes") or "Ej angivet")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Förfarandetyp</div><div class="dp-val">{esc(proc.get("procedure_type") or "Ej angiven")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Publicerad</div><div class="dp-val">{esc(proc.get("published_date") or "Okänt")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Uppskattat värde</div><div class="dp-val">{value_str}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Status</div><div class="dp-val">{esc(proc.get("status") or "Okänd")}</div></div>
-        <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Länk</div><div class="dp-val">{url_html}</div></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # --- AI Relevance ---
-    ai_rel = proc.get("ai_relevance")
-    ai_reason = proc.get("ai_relevance_reasoning") or ""
-    if ai_rel:
-        rel_color = "#4ade80" if ai_rel == "relevant" else "#f87171"
-        rel_label = "Relevant" if ai_rel == "relevant" else "Inte relevant"
-        st.markdown(
-            f'<div style="padding:10px 14px;margin:12px 0;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);'
-            f'border-left:3px solid {rel_color}">'
-            f'<span style="font-weight:700;font-size:12px;color:{rel_color}">AI: {rel_label}</span>'
-            f'<span style="font-size:12px;color:var(--text-1);margin-left:8px"> — {esc(ai_reason)}</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-    if proc.get("description"):
-        with st.expander("Beskrivning", expanded=False):
-            st.markdown(proc["description"])
-
-    # --- Feedback ---
-    st.markdown("---")
-    st.markdown(
-        '<div style="font-weight:700;font-size:14px;color:var(--text-0);margin-bottom:8px">Feedback</div>',
-        unsafe_allow_html=True,
-    )
-
-    fb_reason = st.text_input(
-        "Anledning", key=f"dlg_reason_{proc_id}",
-        label_visibility="collapsed", placeholder="Anledning (valfri)",
-    )
-    fc1, fc2 = st.columns(2)
-    with fc1:
-        btn_rel = st.button("Relevant", key=f"dlg_rel_{proc_id}", use_container_width=True)
-    with fc2:
-        btn_irr = st.button("Inte relevant", key=f"dlg_irr_{proc_id}", use_container_width=True)
-
-    if btn_rel:
-        save_label(proc_id, "relevant", fb_reason)
-    if btn_irr:
-        save_label(proc_id, "irrelevant", fb_reason)
-
-    existing_label = get_label(proc_id)
-    if existing_label:
-        lbl = existing_label["label"]
-        lbl_color = "#4ade80" if lbl == "relevant" else "#f87171"
-        lbl_text = "Relevant" if lbl == "relevant" else "Inte relevant"
-        reason_text = f' — {existing_label["reason"]}' if existing_label.get("reason") else ""
-        st.markdown(
-            f'<div style="font-size:12px;color:{lbl_color};margin-top:4px">'
-            f'Senaste: {lbl_text}{reason_text} ({existing_label["created_at"][:10]})</div>',
-            unsafe_allow_html=True,
-        )
-
-    # --- AI Analysis ---
-    st.markdown("---")
-    st.markdown(
-        '<div style="font-weight:700;font-size:14px;color:var(--text-0);margin-bottom:8px">AI Analys</div>',
-        unsafe_allow_html=True,
-    )
-
-    cached = get_analysis(proc_id)
-
-    btn_ai = st.button(
-        "Analysera med AI" if not cached else "Analysera igen",
-        key=f"dlg_ai_{proc_id}",
-    )
-    if btn_ai:
-        from analyzer import analyze_procurement
-        with st.spinner("Analyserar med Ollama..."):
-            try:
-                result = analyze_procurement(proc_id, force=bool(cached))
-                if result:
-                    cached = result
-                else:
-                    st.error("Analysen misslyckades.")
-            except Exception as e:
-                st.error(f"Fel: {e}")
-
-    if cached:
-        with st.expander("Kravsammanfattning", expanded=True):
-            st.markdown(cached.get("kravsammanfattning") or "Ingen data.")
-        with st.expander("Matchningsanalys", expanded=True):
-            st.markdown(cached.get("matchningsanalys") or "Ingen data.")
-        with st.expander("Prisstrategi", expanded=False):
-            st.markdown(cached.get("prisstrategi") or "Ingen data.")
-        with st.expander("Anbudshjälp", expanded=False):
-            st.markdown(cached.get("anbudshjalp") or "Ingen data.")
-
-        meta_parts = []
-        if cached.get("model"):
-            meta_parts.append(f"Modell: {cached['model']}")
-        if cached.get("input_tokens"):
-            meta_parts.append(f"Input: {cached['input_tokens']} tokens")
-        if cached.get("output_tokens"):
-            meta_parts.append(f"Output: {cached['output_tokens']} tokens")
-        if cached.get("created_at"):
-            meta_parts.append(f"Analyserad: {cached['created_at'][:10]}")
-        if meta_parts:
-            st.caption(" | ".join(meta_parts))
-
-
-# ============================================================
-# KANBAN
-# ============================================================
-if page == "Kanban":
-    st.markdown(
-        '<div class="topbar"><h1>Pipeline</h1>'
-        '<p>Upphandlingar sorterade efter publiceringsdatum (nyast först)</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    stats = get_stats()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Totalt", stats["total"])
-    c2.metric("Nya idag", stats["new_today"])
-    c3.metric("Snitt score", stats["avg_score"])
-    c4.metric("Hög fit (60+)", stats["high_fit"])
-
-    all_procs = get_all_procurements()
-
-    if not all_procs:
-        st.markdown(
-            '<div class="empty"><h3>Ingen data ännu</h3>'
-            '<p>Kör <code>python run_scrapers.py</code> för att hämta upphandlingar.</p></div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        # Filter: only scored (>0) and not AI-irrelevant, sort by newest
-        visible = [p for p in all_procs if (p.get("score") or 0) > 0 and p.get("ai_relevance") != "irrelevant"]
-        visible.sort(key=lambda p: p.get("published_date") or "", reverse=True)
-        high = [p for p in visible if (p.get("score") or 0) >= 60]
-        med = [p for p in visible if 30 <= (p.get("score") or 0) < 60]
-        low = [p for p in visible if 1 <= (p.get("score") or 0) < 30]
-
-        col_h, col_m, col_l = st.columns(3)
-
-        def _render_column(col, title: str, accent: str, items: list, max_show: int = 50):
-            with col:
-                st.markdown(
-                    f'<div style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px;'
-                    f'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
-                    f'<span style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;color:{accent}">{title}</span>'
-                    f'<span class="kb-count">{len(items)}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                if not items:
-                    st.markdown(
-                        '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:12px">Inga upphandlingar</div>',
-                        unsafe_allow_html=True,
-                    )
-                for p in items[:max_show]:
-                    _s = p.get("score", 0) or 0
-                    _title = esc((p.get("title") or "Utan titel")[:90])
-                    _buyer = esc(p.get("buyer") or "")
-                    _source = esc((p.get("source") or "").upper())
-                    _published = (p.get("published_date") or "")[:10]
-                    _deadline = (p.get("deadline") or "")[:10]
-                    _desc = esc((p.get("description") or "")[:120])
-                    _value = fmt_value(p.get("estimated_value"), p.get("currency"))
-                    _label = get_label(p["id"])
-
-                    tags = f'<span class="tag tag-src">{_source}</span>'
-                    if _published:
-                        tags += f' <span class="tag tag-geo">{_published}</span>'
-                    if _deadline:
-                        tags += f' <span class="tag tag-dl">DL {_deadline}</span>'
-                    if _value:
-                        tags += f' <span class="tag tag-val">{_value}</span>'
-
-                    label_indicator = ""
-                    if _label:
-                        _lc = "#4ade80" if _label["label"] == "relevant" else "#f87171"
-                        _lt = "R" if _label["label"] == "relevant" else "IR"
-                        label_indicator = (
-                            f'<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;'
-                            f'font-weight:700;color:{_lc};border:1px solid {_lc}30;margin-left:4px">{_lt}</span>'
-                        )
-
-                    cached_ai = get_analysis(p["id"])
-                    ai_indicator = ""
-                    if cached_ai:
-                        ai_indicator = (
-                            '<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;'
-                            'font-weight:700;color:#60a5fa;border:1px solid #60a5fa30;margin-left:4px">AI</span>'
-                        )
-
-                    _ai_rel = p.get("ai_relevance")
-                    ai_rel_indicator = ""
-                    if _ai_rel == "irrelevant":
-                        ai_rel_indicator = (
-                            '<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;'
-                            'font-weight:700;color:#f87171;border:1px solid #f8717130;margin-left:4px">IR-AI</span>'
-                        )
-
-                    st.markdown(
-                        f'<div class="card {card_cls(_s)}" style="margin-bottom:2px">'
-                        f'  <div class="card-title">{_title}</div>'
-                        f'  {"<div class=card-buyer>" + _buyer + "</div>" if _buyer else ""}'
-                        f'  {"<div class=card-desc>" + _desc + "</div>" if _desc else ""}'
-                        f'  <div class="card-foot">'
-                        f'    <div>{tags}</div>'
-                        f'    <div><span class="badge {badge_cls(_s)}">{_s}</span>{label_indicator}{ai_indicator}{ai_rel_indicator}</div>'
-                        f'  </div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if st.button("Visa", key=f"kb_{p['id']}", use_container_width=True):
-                        show_procurement_dialog(p["id"])
-
-                if len(items) > max_show:
-                    st.caption(f"+{len(items) - max_show} till")
-
-        _render_column(col_h, "Hög prioritet", "#f97316", high)
-        _render_column(col_m, "Medel", "#eab308", med)
-        _render_column(col_l, "Låg", "#52525b", low, max_show=20)
-
-
-# ============================================================
-# SÖK & FILTER
-# ============================================================
-elif page == "Sök & Filter":
-    st.markdown(
-        '<div class="topbar"><h1>Sök & Filter</h1>'
-        '<p>Filtrera upphandlingar efter nyckelord, källa och score</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        query = st.text_input("Fritext", placeholder="t.ex. realtidssystem")
-    with c2:
-        source_filter = st.selectbox("Källa", ["Alla", "ted", "mercell", "kommers", "eavrop"])
-    with c3:
-        geography_filter = st.text_input("Region", placeholder="t.ex. Stockholm")
-    with c4:
-        score_range = st.slider("Score", 0, 100, (0, 100))
-    with c5:
-        ai_filter = st.selectbox("AI Relevans", ["Alla", "Relevant", "Inte relevant", "Ej bedömd"])
-
-    source_val = "" if source_filter == "Alla" else source_filter
-    ai_val_map = {"Alla": "", "Relevant": "relevant", "Inte relevant": "irrelevant", "Ej bedömd": "unassessed"}
-    ai_val = ai_val_map[ai_filter]
-    results = search_procurements(
-        query=query, source=source_val,
-        min_score=score_range[0], max_score=score_range[1],
-        geography=geography_filter,
-        ai_relevance=ai_val,
-    )
-
-    st.markdown(f"**{len(results)}** resultat")
-
-    if results:
-        df = pd.DataFrame(results)[["id", "title", "buyer", "score", "source", "published_date", "deadline", "geography"]]
-        df = df.rename(columns={"published_date": "Publicerad", "deadline": "Deadline"})
-        df = df.sort_values("Publicerad", ascending=False, na_position="last")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.markdown(
-            '<div class="empty"><h3>Inga resultat</h3><p>Prova att ändra filtren.</p></div>',
-            unsafe_allow_html=True,
-        )
-
-
-# ============================================================
-# FEEDBACK
-# ============================================================
-elif page == "Feedback":
-    st.markdown(
-        '<div class="topbar"><h1>Feedback</h1>'
-        '<p>Markerade upphandlingar och feedbackhistorik</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    label_stats = get_label_stats()
-    fc1, fc2, fc3 = st.columns(3)
-    fc1.metric("Totalt bedömda", label_stats["total"])
-    fc2.metric("Relevanta", label_stats["relevant"])
-    fc3.metric("Inte relevanta", label_stats["irrelevant"])
-
-    all_labels = get_all_labels()
-    if all_labels:
-        st.markdown("### Senaste feedback")
-        for lb in all_labels[:50]:
-            lbl = lb["label"]
-            color = "#4ade80" if lbl == "relevant" else "#f87171"
-            icon = "+" if lbl == "relevant" else "-"
-            reason = f' — {lb["reason"]}' if lb.get("reason") else ""
-            score = lb.get("score", 0) or 0
-            st.markdown(
-                f'<div style="display:flex;align-items:flex-start;gap:12px;padding:10px 14px;margin-bottom:6px;'
-                f'background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">'
-                f'<span style="color:{color};font-weight:800;font-size:16px;min-width:16px">{icon}</span>'
-                f'<div style="flex:1">'
-                f'<div style="font-size:13px;font-weight:600;color:var(--text-0)">{esc(lb.get("title", ""))}</div>'
-                f'<div style="font-size:11px;color:var(--text-2);margin-top:2px">'
-                f'{esc(lb.get("buyer", ""))} | Score: {score} | {lb["created_at"][:10]}{reason}</div>'
-                f'</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        # Show top irrelevant patterns
-        irrelevant = [lb for lb in all_labels if lb["label"] == "irrelevant"]
-        if irrelevant:
-            st.markdown("### Mönster i felklassade")
-            irr_buyers = {}
-            irr_reasons = {}
-            for lb in irrelevant:
-                buyer = lb.get("buyer") or "Okänd"
-                irr_buyers[buyer] = irr_buyers.get(buyer, 0) + 1
-                if lb.get("reason"):
-                    irr_reasons[lb["reason"]] = irr_reasons.get(lb["reason"], 0) + 1
-
-            if irr_buyers:
-                st.markdown("**Köpare markerade som irrelevanta:**")
-                sorted_buyers = sorted(irr_buyers.items(), key=lambda x: x[1], reverse=True)
-                for buyer, count in sorted_buyers[:10]:
-                    st.markdown(
-                        f'<div style="font-size:12px;color:var(--text-1);padding:2px 0">'
-                        f'{esc(buyer)}: <span style="color:#f87171">{count}x</span></div>',
-                        unsafe_allow_html=True,
-                    )
-
-            if irr_reasons:
-                st.markdown("**Vanligaste anledningar:**")
-                sorted_reasons = sorted(irr_reasons.items(), key=lambda x: x[1], reverse=True)
-                for reason, count in sorted_reasons[:10]:
-                    st.markdown(
-                        f'<div style="font-size:12px;color:var(--text-1);padding:2px 0">'
-                        f'{esc(reason)}: <span style="color:#f87171">{count}x</span></div>',
-                        unsafe_allow_html=True,
-                    )
-    else:
-        st.markdown(
-            '<div class="empty"><h3>Ingen feedback ännu</h3>'
-            '<p>Använd Relevant/Inte relevant-knapparna på Kanban-sidan för att markera upphandlingar.</p></div>',
-            unsafe_allow_html=True,
-        )
-
-
+pg = st.navigation(nav_pages)
+pg.run()

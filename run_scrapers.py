@@ -2,7 +2,11 @@
 """CLI-skript för att köra alla scrapers, lagra resultat och scora leads."""
 
 import argparse
-from db import init_db, upsert_procurement, get_all_procurements, update_score, deduplicate_procurements
+from db import (
+    init_db, upsert_procurement, get_all_procurements, update_score,
+    deduplicate_procurements, ensure_pipeline_entry, seed_accounts,
+    auto_link_procurements_to_accounts, get_all_active_watches, create_notification,
+)
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
 
@@ -47,6 +51,20 @@ def run(sources: list[str] | None = None, skip_scoring: bool = False, ollama_mod
     if not skip_analysis:
         run_deep_analysis(ollama_model=ollama_model)
 
+    # Auto-create pipeline entries for relevant procurements
+    print("\nSkapar pipeline-poster för relevanta upphandlingar...")
+    create_pipeline_entries()
+
+    # Seed accounts and auto-link
+    print("\nSeedar konton och länkar upphandlingar...")
+    seed_accounts()
+    linked = auto_link_procurements_to_accounts()
+    print(f"Länkade {linked} upphandlingar till konton")
+
+    # Check watch lists
+    print("\nKontrollerar bevakningslistor...")
+    check_watch_lists()
+
     print("\nKlart!")
 
 
@@ -77,6 +95,66 @@ def run_deep_analysis(min_score: int = 1, force: bool = False, ollama_model: str
     print(f"\nKör Ollama-djupanalys (modell: {ollama_model}) på relevanta upphandlingar...")
     from analyzer import analyze_all_relevant
     analyze_all_relevant(min_score=min_score, force=force, model=ollama_model)
+
+
+def create_pipeline_entries():
+    """Auto-create pipeline entries for procurements with score>0 and ai_relevance=relevant."""
+    procurements = get_all_procurements()
+    count = 0
+    for p in procurements:
+        score = p.get("score") or 0
+        ai_rel = p.get("ai_relevance")
+        if score > 0 and ai_rel == "relevant":
+            ensure_pipeline_entry(p["id"])
+            count += 1
+    print(f"Pipeline-poster: {count} relevanta upphandlingar")
+
+
+def check_watch_lists():
+    """Check new procurements against active watch lists and create notifications."""
+    watches = get_all_active_watches()
+    if not watches:
+        return
+
+    from datetime import datetime, timedelta
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    procurements = get_all_procurements()
+    new_procs = [p for p in procurements if (p.get("created_at") or "") >= yesterday]
+
+    if not new_procs:
+        return
+
+    notified = 0
+    for watch in watches:
+        for proc in new_procs:
+            matched = False
+
+            if watch["watch_type"] == "account" and watch.get("account_normalized"):
+                buyer_lower = (proc.get("buyer") or "").lower()
+                aliases = (watch.get("buyer_aliases") or "").lower().split(",")
+                aliases.append(watch["account_normalized"])
+                for alias in aliases:
+                    if alias.strip() and alias.strip() in buyer_lower:
+                        matched = True
+                        break
+
+            elif watch["watch_type"] == "keyword" and watch.get("keyword"):
+                kw = watch["keyword"].lower()
+                text = f"{proc.get('title', '')} {proc.get('description', '')}".lower()
+                if kw in text:
+                    matched = True
+
+            if matched:
+                create_notification(
+                    username=watch["user_username"],
+                    notification_type="watch_match",
+                    title=f"Ny upphandling matchar bevakning: {(proc.get('title') or '')[:60]}",
+                    body=f"Köpare: {proc.get('buyer', '')}. Källa: {proc.get('source', '')}",
+                    procurement_id=proc["id"],
+                )
+                notified += 1
+
+    print(f"Bevakningsnotiser: {notified}")
 
 
 def main():

@@ -1,0 +1,26 @@
+credentials:
+  usernames:
+    anna_lindberg:
+      email: anna.lindberg@hogia.se
+      name: Anna Lindberg
+      password: "$2b$12$7kleKF2fAbD./5Vxvj3ZEOp.F9EQYAQll6NYKPCol3l1/3NIoyZmm"  # changeme123
+      role: kam
+    erik_svensson:
+      email: erik.svensson@hogia.se
+      name: Erik Svensson
+      password: "$2b$12$7kleKF2fAbD./5Vxvj3ZEOp.F9EQYAQll6NYKPCol3l1/3NIoyZmm"  # changeme123
+      role: kam
+    maria_johansson:
+      email: maria.johansson@hogia.se
+      name: Maria Johansson
+      password: "$2b$12$7kleKF2fAbD./5Vxvj3ZEOp.F9EQYAQll6NYKPCol3l1/3NIoyZmm"  # changeme123
+      role: kam
+    peter_nilsson:
+      email: peter.nilsson@hogia.se
+      name: Peter Nilsson
+      password: "$2b$12$7kleKF2fAbD./5Vxvj3ZEOp.F9EQYAQll6NYKPCol3l1/3NIoyZmm"  # changeme123
+      role: saljchef
+cookie:
+  expiry_days: 30
+  key: upphandling_cookie_key_change_me
+  name: upphandling_auth

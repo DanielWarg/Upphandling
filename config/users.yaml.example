@@ -1,0 +1,16 @@
+credentials:
+  usernames:
+    example_kam:
+      email: kam@example.com
+      name: Exempel KAM
+      password: "$2b$12$BCRYPT_HASH_HERE"  # Generate with: python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt()).decode())"
+      role: kam
+    example_chef:
+      email: chef@example.com
+      name: Exempel Chef
+      password: "$2b$12$BCRYPT_HASH_HERE"
+      role: saljchef
+cookie:
+  expiry_days: 30
+  key: CHANGE_THIS_TO_A_RANDOM_STRING
+  name: upphandling_auth
