@@ -16,11 +16,14 @@ Svenskt verktyg för att bevaka kollektivtrafikupphandlingar åt Hogia. Scrapar 
 - streamlit-calendar (FullCalendar.js)
 
 ## AI-analys
-- **Prefilter**: Ollama/llama-server, snabb relevans-check per upphandling
-- **Djupanalys**: Ministral 3 14B via llama-server med function calling (strukturerad JSON-output)
-- **Modell-GGUF**: `~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf`
-- **Endpoint**: Konfigurerbar via `LLM_BASE_URL` i `.env` (default: `http://localhost:11434/v1`)
-- Starta llama-server: `llama-server --model ~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf --port 8081 --ctx-size 16384 --jinja`
+- **Modell**: Ministral 3 14B (ENDA modellen vi kör — levererar bäst resultat)
+- **Server**: llama-server (INTE Ollama, INTE Qwen, INTE Gemini)
+- **Prefilter**: Snabb relevans-check per upphandling — filtrerar brus efter nyckelordsscoringen
+- **Djupanalys**: Function calling med strukturerad JSON-output (kravsammanfattning, matchning, prisstrategi, anbudshjälp)
+- **GGUF**: `~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf`
+- **Endpoint**: `LLM_BASE_URL=http://localhost:8081/v1` i `.env`
+- **Starta**: `llama-server --model ~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf --port 8081 --ctx-size 16384 --jinja`
+- **OBS**: Använd ALDRIG andra modeller (Qwen, Llama etc). Ministral 3 14B är testad och validerad.
 
 ## Kommandon
 - `python3 run_scrapers.py` — hämta alla källor + scora + AI-analys + pipeline + konto-länkning

@@ -103,9 +103,12 @@ BASE_WEIGHT_KEYWORDS: dict[str, int] = {
 # Blocked sectors — hard gate
 # ---------------------------------------------------------------------------
 BLOCKED_SECTORS: dict[str, list[str]] = {
-    "Medicinsk": [
+    "Medicinsk/vård": [
         "ekg", "journal", "antikoagulantia", "medicinsk programvara",
         "läkemedel", "laboratori", "röntgen", "patologi", "klinisk",
+        "tandvård", "tandvårdssystem", "ambulans", "patient",
+        "sjukvård", "vårdmöten", "egenmonitorering", "medicintekn",
+        "bildhanteringssystem", "frikort", "veterinär",
     ],
     "VA/vatten": [
         "ultrafilter", "reningsverk", "avlopp", "vattenledning", "vattenverk",
@@ -113,25 +116,79 @@ BLOCKED_SECTORS: dict[str, list[str]] = {
     "Bygg/anläggning": [
         "totalentreprenad", "markentreprenad", "betongarbeten",
         "asfaltering", "rivning", "schakt", "byggnation",
+        "tekniska konsulter", "ingenjörstjänster",
     ],
-    "IT-drift": [
+    "IT-drift/system": [
         "serverdrift", "nätverksdrift", "hårdvara", "licenser",
-        "systemdrift", "it-infrastruktur",
+        "systemdrift", "it-infrastruktur", "cyberhot", "mdr-tjänst",
+        "bokningssystem", "biljettsystem", "biljett-",
+        "bibliotekssystem", "lagerförvaltning", "kassasystem",
     ],
     "Transport/drift": [
         "busstrafik", "linjetrafik", "tågtrafik", "färjetrafik",
-        "taxitjänst", "godstransport", "bränsle",
+        "taxitjänst", "godstransport", "bränsle", "skolskjuts",
+        "yrkesförare", "körkortsutbildning", "snöskoter",
+        "skogsbrandsbevakning", "avfallstransport", "åkeritjänster",
+        "tredjepartslogistik", "3pl", "hemkörning",
+        "realtidsinformation", "passagerarinformation",
+        "kollektivtrafik", "färdtjänst",
     ],
     "Material/varor": [
         "kontorsmaterial", "möbler", "livsmedel", "tryckeri",
-        "städ", "tvätt", "fordon", "maskiner",
+        "städ", "tvätt", "fordon", "maskiner", "dagligvaror",
+    ],
+    "Infrastruktur": [
+        "fyra spår", "infrastrukturprojekt", "terminologitjänst",
+        "patientkallelse", "larm", "passerkontroll",
+    ],
+    "Rekrytering/bemanning": [
+        "bemanningstjänster", "personaluthyrning", "inhyrning av läkare",
+        "inhyrning av sjukskötersk", "förmedling av vårdpersonal",
+        "förmedling av läkare", "sjukskötersketjänster",
+        "rekryteringstjänster", "second opinion vid rekrytering",
+    ],
+    "Juridik/finans": [
+        "inkasso", "påminnelsetjänster", "juridisk rådgivning",
+        "advokatbyråtjänster", "revisionstjänster",
+    ],
+    "Marknadsföring/reklam": [
+        "reklam och marknadsföring", "kommunikationsbyrå",
+        "profilprodukter", "presenter och priser",
+        "korrekturläsning", "proofreading",
+    ],
+    "Undersökning/analys": [
+        "undersökningstjänster", "marknadsundersökning",
+        "telefonnummersättning", "statistisk",
     ],
 }
 
 # ---------------------------------------------------------------------------
-# CPV-codes relevant for education/consulting (79=consulting, 80=education)
+# CPV-koder relevanta för HAST:s tjänsteområden
 # ---------------------------------------------------------------------------
-EDUCATION_CPV_PREFIXES = ["79", "80"]
+HAST_CPV_CODES: dict[str, int] = {
+    # Kärnkoder — exakt match, hög bonus
+    "80532000": 20,  # Chefsutbildning
+    "79633000": 20,  # Personalutveckling
+    "79632000": 18,  # Utbildning av personal
+    "80511000": 18,  # Personalutbildning
+    "79998000": 20,  # Coachning
+    "80570000": 18,  # Utbildning i personlig utveckling
+    # Relevanta koder — mellannivå
+    "79414000": 12,  # Managementkonsulttjänster
+    "79411100": 10,  # Rådgivning rörande utveckling
+    "79411000": 10,  # Allmän managementrådgivning
+    "79410000": 8,   # Företags- och organisationsrådgivning
+    "80590000": 10,  # Handledning
+    "80521000": 8,   # Utbildningsprogram
+    "79600000": 5,   # Rekryteringstjänster (HR-angränsande)
+    # Breda koder — låg bonus (gate-signal)
+    "80500000": 5,   # Utbildningstjänster (bred)
+    "80530000": 5,   # Yrkesutbildning (bred)
+    "80000000": 3,   # Undervisning och utbildning (mycket bred)
+}
+
+# Gate-prefix: CPV-koder som indikerar utbildnings-/konsultrelevans
+EDUCATION_CPV_PREFIXES = ["8053", "8051", "8057", "8059", "7963", "7941", "7999"]
 
 # ---------------------------------------------------------------------------
 # Known relevant buyers — offentliga organisationer som upphandlar utbildning
@@ -169,8 +226,8 @@ def sector_gate(
     has_signal = any(kw in full_text for kw in EDUCATION_GATE_KEYWORDS)
 
     if not has_signal:
-        # Education CPV counts as signal
-        has_signal = any(prefix in cpv_lower for prefix in EDUCATION_CPV_PREFIXES)
+        # Education CPV counts as signal — check each individual CPV code prefix
+        has_signal = _has_cpv_prefix(cpv_lower, EDUCATION_CPV_PREFIXES)
 
     if not has_signal:
         return False, "Ingen utbildnings-/utvecklingssignal"
@@ -178,16 +235,36 @@ def sector_gate(
     return True, "Passerade sector gate"
 
 
+def _has_cpv_prefix(cpv_string: str, prefixes: list[str]) -> bool:
+    """Check if any individual CPV code starts with one of the given prefixes."""
+    if not cpv_string:
+        return False
+    # CPV codes are comma-separated; split and check each one's prefix
+    for code in cpv_string.split(","):
+        code = code.strip()
+        if any(code.startswith(prefix) for prefix in prefixes):
+            return True
+    return False
+
+
 def score_procurement(
     title: str = "",
     description: str = "",
     buyer: str = "",
     cpv_codes: str = "",
-) -> tuple[int, str]:
-    """Score a procurement for HAST relevance. Returns (score, rationale)."""
+) -> tuple[int, str, dict]:
+    """Score a procurement for HAST relevance. Returns (score, rationale, breakdown)."""
     gate_passed, gate_reason = sector_gate(title, description, buyer, cpv_codes)
     if not gate_passed:
-        return 0, gate_reason
+        breakdown = {
+            "gate_passed": False,
+            "gate_reason": gate_reason,
+            "keyword_matches": [],
+            "cpv_matches": [],
+            "buyer_bonus": 0,
+            "total": 0,
+        }
+        return 0, gate_reason, breakdown
 
     text = f"{title} {description}".lower()
     cpv_lower = (cpv_codes or "").lower()
@@ -196,27 +273,50 @@ def score_procurement(
 
     total = 0
     matched: list[str] = []
+    keyword_matches: list[dict] = []
 
     matched.append("Utbildning/utveckling")
     for keyword, weight in ALL_KEYWORDS.items():
         if keyword in full_text:
             total += weight
             matched.append(f"{keyword} (+{weight})")
+            keyword_matches.append({"keyword": keyword, "weight": weight})
 
     # Buyer bonus — offentlig sektor
+    buyer_bonus = 0
     for known in KNOWN_BUYERS:
         if known in buyer_lower:
-            total += 8
+            buyer_bonus = 8
+            total += buyer_bonus
             matched.append(f"offentlig köpare (+8)")
             break
 
-    # CPV bonus
-    for prefix in EDUCATION_CPV_PREFIXES:
-        if prefix in cpv_lower:
-            total += 8
-            matched.append(f"Utbildnings-CPV ({prefix}*) (+8)")
-            break
+    # CPV bonus — per-code match with HAST-specific weights
+    cpv_bonus = 0
+    cpv_matched_codes: list[str] = []
+    cpv_matches: list[dict] = []
+    if cpv_lower:
+        for code in cpv_lower.split(","):
+            code = code.strip().split(":")[0].strip()
+            if code in HAST_CPV_CODES and code not in cpv_matched_codes:
+                bonus = HAST_CPV_CODES[code]
+                cpv_bonus += bonus
+                cpv_matched_codes.append(code)
+                cpv_matches.append({"code": code, "bonus": bonus})
+    if cpv_bonus:
+        total += cpv_bonus
+        matched.append(f"CPV-match ({','.join(cpv_matched_codes)}) (+{cpv_bonus})")
 
     total = max(0, min(total, 100))
     rationale = ", ".join(matched) if matched else "Inga matchande nyckelord"
-    return total, rationale
+
+    breakdown = {
+        "gate_passed": True,
+        "gate_reason": "Passerade sector gate",
+        "keyword_matches": keyword_matches,
+        "cpv_matches": cpv_matches,
+        "buyer_bonus": buyer_bonus,
+        "total": total,
+    }
+
+    return total, rationale, breakdown

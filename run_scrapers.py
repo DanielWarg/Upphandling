@@ -73,13 +73,13 @@ def score_all():
     init_db()
     procurements = get_all_procurements()
     for p in procurements:
-        score, rationale = score_procurement(
+        score, rationale, breakdown = score_procurement(
             title=p.get("title", ""),
             description=p.get("description", ""),
             buyer=p.get("buyer", ""),
             cpv_codes=p.get("cpv_codes", ""),
         )
-        update_score(p["id"], score, rationale)
+        update_score(p["id"], score, rationale, breakdown)
     print(f"Scorade {len(procurements)} upphandlingar")
 
 

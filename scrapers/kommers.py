@@ -5,42 +5,55 @@ Scrapes the public tender notice list at kommersannons.se/Notices/TenderNotices.
 
 from __future__ import annotations
 
+import logging
 import re
 import httpx
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
+from .backoff import with_backoff
+from models import TenderRecord
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.kommersannons.se"
 LIST_URL = f"{BASE_URL}/Notices/TenderNotices"
 MAX_PAGES = 3  # ~40 notices per page → ~120 max
 
-# Sökfilter för att minska brus — skickas som formulärdata
+# Sökfilter — HAST Utveckling: ledarskap, utbildning, organisationsutveckling
 SEARCH_FILTERS = {
-    "SearchString": "kollektivtrafik realtid trafikledning",
+    "SearchString": "utbildning ledarskap coaching organisationsutveckling",
     "SelectedContractType": "",  # Alla typer
 }
 
-# Klientsidigt relevansfilter — nyckelord som indikerar potentiell relevans
+# Klientsidigt relevansfilter — nyckelord som indikerar potentiell relevans för HAST
 RELEVANCE_KEYWORDS = [
-    "kollektivtrafik", "realtid", "trafikledning", "it-system",
-    "biljettsystem", "passagerarinformation", "72000000", "48000000",
-    "reseplanerare", "anropsstyrd", "färdtjänst", "serviceresor",
-    "trafikinformation", "hållplats", "realtidsinformation",
-    "trafikplanering", "biljett", "systemstöd", "fordons",
+    "utbildning", "ledarskap", "ledarskapsutveckling", "chefsutveckling",
+    "chefsutbildning", "kompetensutveckling", "organisationsutveckling",
+    "teamutveckling", "coaching", "coachning", "mentorskap", "handledning",
+    "konflikthantering", "stresshantering", "arbetsmiljö", "förändringsledning",
+    "seminarium", "workshop", "föreläsning", "teambuilding",
+    "personalutveckling", "medarbetarutveckling", "hr-tjänster",
+    "kompetensförsörjning", "ledarskapsprogram", "chefsprogram",
+    "managementkonsult", "organisationskonsult", "feedbackkultur",
+    "80000000", "80500000", "80530000", "80570000",  # CPV utbildning
+    "79414000", "79411000",  # CPV HR/management-konsult
 ]
 
 
 class KommersScraper(BaseScraper):
     name = "kommers"
 
-    def fetch(self) -> list[dict]:
-        results: list[dict] = []
+    def fetch(self) -> list[TenderRecord]:
+        results: list[TenderRecord] = []
         try:
             with httpx.Client(timeout=30, follow_redirects=True) as client:
                 # Försök med sökfilter först
-                resp = client.get(LIST_URL, params={"SearchString": SEARCH_FILTERS["SearchString"]})
-                resp.raise_for_status()
+                def _get_filtered():
+                    r = client.get(LIST_URL, params={"SearchString": SEARCH_FILTERS["SearchString"]})
+                    r.raise_for_status()
+                    return r
+                resp = with_backoff(_get_filtered)
                 filtered = self._parse_listing(resp.text)
 
                 if filtered:
@@ -48,8 +61,11 @@ class KommersScraper(BaseScraper):
                 else:
                     # Fallback till ofiltrerad scraping om filtret inte ger resultat
                     print("[Kommers] Sökfiltret gav inga resultat, faller tillbaka till ofiltrerad scraping")
-                    resp = client.get(LIST_URL)
-                    resp.raise_for_status()
+                    def _get_unfiltered():
+                        r = client.get(LIST_URL)
+                        r.raise_for_status()
+                        return r
+                    resp = with_backoff(_get_unfiltered)
                     results.extend(self._parse_listing(resp.text))
 
                 # Paginate via POST with hidden form fields
@@ -57,8 +73,11 @@ class KommersScraper(BaseScraper):
                     next_form = self._extract_next_form(resp.text)
                     if not next_form:
                         break
-                    resp = client.post(LIST_URL, data=next_form)
-                    resp.raise_for_status()
+                    def _post_next(data=next_form):
+                        r = client.post(LIST_URL, data=data)
+                        r.raise_for_status()
+                        return r
+                    resp = with_backoff(_post_next)
                     page_results = self._parse_listing(resp.text)
                     if not page_results:
                         break
@@ -73,15 +92,15 @@ class KommersScraper(BaseScraper):
         return filtered
 
     @staticmethod
-    def _is_potentially_relevant(proc: dict) -> bool:
+    def _is_potentially_relevant(proc: TenderRecord) -> bool:
         """Check if a procurement is potentially relevant based on keywords."""
-        text = f"{proc.get('title', '')} {proc.get('description', '')} {proc.get('cpv_codes', '')}".lower()
+        text = f"{proc.title or ''} {proc.description or ''} {proc.cpv_codes or ''}".lower()
         return any(kw in text for kw in RELEVANCE_KEYWORDS)
 
-    def _parse_listing(self, html: str) -> list[dict]:
+    def _parse_listing(self, html: str) -> list[TenderRecord]:
         """Parse all notice rows from a listing page."""
         soup = BeautifulSoup(html, "html.parser")
-        notices: list[dict] = []
+        notices: list[TenderRecord] = []
 
         for row in soup.select("div.row.mt-4.mb-4"):
             try:
@@ -93,7 +112,7 @@ class KommersScraper(BaseScraper):
                 continue
         return notices
 
-    def _parse_notice_row(self, row) -> dict | None:
+    def _parse_notice_row(self, row) -> TenderRecord | None:
         """Extract procurement data from a single notice row."""
         link = row.select_one("h4 > a[href]")
         if not link:
@@ -124,7 +143,6 @@ class KommersScraper(BaseScraper):
         for sm in smalls:
             text = sm.get_text(strip=True)
             if "publicering" in text.lower():
-                # "Datum då annonsen skickades för publicering 2026-01-28"
                 date_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
                 if date_match:
                     published_date = date_match.group(1)
@@ -148,22 +166,32 @@ class KommersScraper(BaseScraper):
             except (ValueError, TypeError):
                 pass
 
-        return {
-            "source": "kommers",
-            "source_id": f"KOM-{source_id}",
-            "title": title,
-            "buyer": None,  # Not on listing page
-            "geography": geography,
-            "cpv_codes": cpv_codes,
-            "procedure_type": None,
-            "published_date": published_date,
-            "deadline": deadline,
-            "estimated_value": None,
-            "currency": "SEK",
-            "status": "published",
-            "url": url,
-            "description": description,
-        }
+        # Flag as needs_review if title looks incomplete
+        status = "published"
+        if not title or len(title) < 5:
+            status = "needs_review"
+            logger.warning("[Kommers] Notice KOM-%s has very short title", source_id)
+
+        try:
+            return TenderRecord(
+                source="kommers",
+                source_id=f"KOM-{source_id}",
+                title=title,
+                buyer=None,  # Not on listing page
+                geography=geography,
+                cpv_codes=cpv_codes,
+                procedure_type=None,
+                published_date=published_date,
+                deadline=deadline,
+                estimated_value=None,
+                currency="SEK",
+                status=status,
+                url=url,
+                description=description,
+            )
+        except Exception as e:
+            logger.warning("[Kommers] Failed to create TenderRecord for KOM-%s: %s", source_id, e)
+            return None
 
     @staticmethod
     def _extract_next_form(html: str) -> dict | None:

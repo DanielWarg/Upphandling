@@ -1,5 +1,6 @@
 """SQLite schema and CRUD operations for procurements."""
 
+import json
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
@@ -65,6 +66,8 @@ def init_db():
         conn.execute("ALTER TABLE procurements ADD COLUMN ai_relevance TEXT")
     if "ai_relevance_reasoning" not in existing_cols:
         conn.execute("ALTER TABLE procurements ADD COLUMN ai_relevance_reasoning TEXT")
+    if "score_breakdown" not in existing_cols:
+        conn.execute("ALTER TABLE procurements ADD COLUMN score_breakdown TEXT")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS labels (
@@ -298,8 +301,14 @@ def deduplicate_procurements() -> int:
     return deleted
 
 
-def upsert_procurement(data: dict) -> int:
-    """Insert or update a procurement. Returns the row id."""
+def upsert_procurement(data) -> int:
+    """Insert or update a procurement. Returns the row id.
+
+    Accepts a dict or a TenderRecord (converted via to_db_dict()).
+    """
+    # Support TenderRecord objects
+    if hasattr(data, "to_db_dict"):
+        data = data.to_db_dict()
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
 
@@ -387,12 +396,13 @@ def upsert_procurement(data: dict) -> int:
     return row_id
 
 
-def update_score(procurement_id: int, score: int, rationale: str):
+def update_score(procurement_id: int, score: int, rationale: str, breakdown: dict | None = None):
     """Update the lead score for a procurement."""
     conn = get_connection()
+    breakdown_json = json.dumps(breakdown, ensure_ascii=False) if breakdown else None
     conn.execute(
-        "UPDATE procurements SET score = ?, score_rationale = ?, updated_at = ? WHERE id = ?",
-        (score, rationale, datetime.now(timezone.utc).isoformat(), procurement_id),
+        "UPDATE procurements SET score = ?, score_rationale = ?, score_breakdown = ?, updated_at = ? WHERE id = ?",
+        (score, rationale, breakdown_json, datetime.now(timezone.utc).isoformat(), procurement_id),
     )
     conn.commit()
     conn.close()

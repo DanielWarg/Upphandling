@@ -402,12 +402,23 @@ def get_cached_analysis(procurement_id: int) -> dict | None:
 # ---------------------------------------------------------------------------
 # AI Prefilter — cheap relevance check using Gemini
 # ---------------------------------------------------------------------------
-PREFILTER_SYSTEM_PROMPT = """Du är expert på svensk kollektivtrafik-IT. Bedöm om denna upphandling
-är relevant för Hogia PTS (leverantör av realtidssystem, trafikledning,
-reseplanerare, beordring, anropsstyrd trafik för kollektivtrafik).
+PREFILTER_SYSTEM_PROMPT = """Du är expert på svensk offentlig upphandling inom utbildning och organisationsutveckling.
+Bedöm om denna upphandling är relevant för HAST Utveckling — ett konsultbolag som erbjuder:
 
-RELEVANT: IT-system för kollektivtrafik, serviceresor, passagerarinformation, färdtjänst, sjukresor, skolskjuts
-IRRELEVANT: Drift av bussar/tåg, kulturella institutioner, generell IT utan transport, hårdvaruinköp, kontorsmaterial
+- Ledarskapsutbildning, ledarskapsutveckling, chefsutveckling
+- Executive coaching, chefscoaching, handledning, mentorskap
+- Teamutveckling, grupputveckling, organisationsutveckling
+- Kommunikationsutbildning, konflikthantering, stresshantering
+- Förändringsledning, arbetskultur, medarbetarutveckling
+- Seminarier, workshops, inspirationsföreläsningar
+- Managementkonsulttjänster inom ledarskap och organisation
+
+RELEVANT: Upphandlingar där HAST kan vara underleverantör eller anbudsgivare — ledarskap, coaching,
+teamutveckling, organisationsförändring, kompetensutveckling inom mjuka/HR-relaterade områden.
+
+IRRELEVANT: Teknisk IT-utbildning, yrkesutbildning (svetsning, truckkort), medicinsk utbildning,
+körkortsutbildning, språkkurser, ren rekrytering/bemanning, köp av varor/material/hårdvara,
+bygg/anläggning, transport/drift, systemutveckling, laboratorietjänster.
 
 Returnera ENBART JSON: {"relevant": true/false, "reasoning": "kort motivering på svenska"}"""
 
@@ -446,7 +457,7 @@ def _parse_prefilter_json(raw_text: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # Local LLM — OpenAI-compatible API (Ollama or llama-server)
 # ---------------------------------------------------------------------------
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:8081/v1")
 
 ANALYSIS_TOOL = {
     "type": "function",

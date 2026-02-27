@@ -1,0 +1,37 @@
+[
+  {
+    "publication-number": "2026/S 001-000001",
+    "notice-title": {"swe": "Sverige-Stockholm: Ledarskapsutveckling"},
+    "description-proc": {"swe": "Ramavtal for ledarskapsutbildning och chefsutveckling inom offentlig sektor."},
+    "organisation-name-buyer": {"swe": "Region Stockholm"},
+    "classification-cpv": ["80532000", "79633000"],
+    "publication-date": "2026-01-15",
+    "deadline-receipt-tender-date-lot": ["2026-03-01"],
+    "estimated-value-proc": 5000000,
+    "estimated-value-cur-proc": "SEK",
+    "links": {"html": {"SWE": "https://ted.europa.eu/sv/notice/-/detail/2026-S-001-000001"}}
+  },
+  {
+    "publication-number": "2026/S 001-000002",
+    "notice-title": {"swe": "Sverige-Goteborg: Busstrafik i Vastra Gotaland"},
+    "description-proc": {"swe": "Upphandling av busstrafik for kollektivtrafiken."},
+    "organisation-name-buyer": {"swe": "Vasttrafik AB"},
+    "classification-cpv": ["60112000"],
+    "publication-date": "2026-01-20",
+    "deadline-receipt-tender-date-lot": ["2026-04-15"],
+    "estimated-value-proc": 100000000,
+    "estimated-value-cur-proc": "SEK"
+  },
+  {
+    "publication-number": "2026/S 001-000003",
+    "notice-title": {"eng": "Sweden: Coaching and mentoring services"},
+    "description-proc": null,
+    "description-lot": {"eng": "Executive coaching services for public sector managers."},
+    "organisation-name-buyer": {"eng": "Swedish Transport Administration"},
+    "classification-cpv": ["79998000"],
+    "publication-date": "2026-02-01",
+    "deadline-receipt-tender-date-lot": ["2026-05-01"],
+    "estimated-value-proc": {"value": 2000000},
+    "estimated-value-cur-proc": "EUR"
+  }
+]

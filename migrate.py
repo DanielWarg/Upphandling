@@ -92,6 +92,21 @@ def _seed_users_from_yaml():
         print(f"  Kunde inte seeda användare: {e}")
 
 
+def migrate_v2_to_v3():
+    """Migrate from v2 to v3 — add score_breakdown column."""
+    print("Migrerar v2 → v3...")
+
+    # init_db() handles adding the column if missing
+    init_db()
+
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (3)")
+    conn.commit()
+    conn.close()
+
+    print("Migration v2 → v3 klar!")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Databasmigrering")
     parser.add_argument("--status", action="store_true", help="Visa nuvarande schemaversion")
@@ -107,6 +122,9 @@ def main():
 
     if current < 2:
         migrate_v1_to_v2()
+        current = 2
+    if current < 3:
+        migrate_v2_to_v3()
     else:
         print("Databasen är redan uppdaterad.")
 

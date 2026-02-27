@@ -3,6 +3,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
+from models import TenderRecord
+
 
 class BaseScraper(ABC):
     """Common interface for all procurement scrapers."""
@@ -10,16 +12,8 @@ class BaseScraper(ABC):
     name: str = "base"
 
     @abstractmethod
-    def fetch(self) -> list[dict]:
-        """Fetch procurements and return a list of normalized dicts.
-
-        Each dict should have at minimum:
-            source, source_id, title
-        And optionally:
-            buyer, geography, cpv_codes, procedure_type,
-            published_date, deadline, estimated_value, currency,
-            status, url, description
-        """
+    def fetch(self) -> list[TenderRecord]:
+        """Fetch procurements and return a list of TenderRecord objects."""
         ...
 
     def __repr__(self):

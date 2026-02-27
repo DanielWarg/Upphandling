@@ -5,6 +5,8 @@ import html as html_lib
 import streamlit as st
 import pandas as pd
 
+import json
+
 from db import (
     get_all_procurements, search_procurements, get_procurement,
     get_stats, get_analysis, save_label, get_label, get_all_labels, get_label_stats,
@@ -92,6 +94,71 @@ def show_procurement_dialog(proc_id: int):
         <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Länk</div><div class="dp-val">{url_html}</div></div>
     </div>
     """, unsafe_allow_html=True)
+
+    # --- Score Breakdown ---
+    raw_breakdown = proc.get("score_breakdown")
+    if raw_breakdown:
+        try:
+            bd = json.loads(raw_breakdown) if isinstance(raw_breakdown, str) else raw_breakdown
+        except (json.JSONDecodeError, TypeError):
+            bd = None
+        if bd:
+            with st.expander("Poanganalys", expanded=False):
+                gate_color = "#4ade80" if bd.get("gate_passed") else "#f87171"
+                gate_label = "Passerad" if bd.get("gate_passed") else "Blockerad"
+                st.markdown(
+                    f'<div style="font-size:12px;margin-bottom:8px">'
+                    f'<span style="color:{gate_color};font-weight:700">Gate: {gate_label}</span>'
+                    f'<span style="color:var(--text-2);margin-left:8px">{esc(bd.get("gate_reason", ""))}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                kw_matches = bd.get("keyword_matches", [])
+                if kw_matches:
+                    kw_html = "".join(
+                        f'<span style="display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;'
+                        f'background:var(--orange-dim);border:1px solid rgba(249,115,22,0.2);'
+                        f'border-radius:4px;font-size:11px;color:var(--orange-light)">'
+                        f'{esc(m["keyword"])} <span style="font-weight:700">+{m["weight"]}</span></span>'
+                        for m in kw_matches
+                    )
+                    st.markdown(
+                        f'<div style="margin-bottom:8px">'
+                        f'<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Nyckelord</div>'
+                        f'{kw_html}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                cpv_matches = bd.get("cpv_matches", [])
+                if cpv_matches:
+                    cpv_html = "".join(
+                        f'<span style="display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;'
+                        f'background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.2);'
+                        f'border-radius:4px;font-size:11px;color:#60a5fa">'
+                        f'{esc(m["code"])} <span style="font-weight:700">+{m["bonus"]}</span></span>'
+                        for m in cpv_matches
+                    )
+                    st.markdown(
+                        f'<div style="margin-bottom:8px">'
+                        f'<div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">CPV-koder</div>'
+                        f'{cpv_html}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                buyer_bonus = bd.get("buyer_bonus", 0)
+                if buyer_bonus:
+                    st.markdown(
+                        f'<div style="font-size:12px;color:var(--text-1);margin-bottom:4px">'
+                        f'Offentlig kopare: <span style="font-weight:700;color:var(--orange-light)">+{buyer_bonus}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                st.markdown(
+                    f'<div style="font-size:14px;font-weight:700;color:var(--text-0);margin-top:8px;padding-top:8px;border-top:1px solid var(--border-subtle)">'
+                    f'Totalpoang: {bd.get("total", 0)}/100</div>',
+                    unsafe_allow_html=True,
+                )
 
     # --- Pipeline status ---
     pipeline_item = get_pipeline_item(proc_id)

@@ -6,9 +6,14 @@ Kör flera sökningar för att fånga svenska upphandlingar relevanta för kolle
 
 from __future__ import annotations
 
+import logging
 import time
 import httpx
 from .base import BaseScraper
+from .backoff import with_backoff
+from models import TenderRecord
+
+logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://api.ted.europa.eu/v3/notices/search"
 
@@ -25,19 +30,19 @@ FIELDS = [
     "estimated-value-cur-proc",
 ]
 
-# Sökfrågor — kombinerar CPV med nyckelord, bredare datumspann
-# TED v3 API: använd FT= för fulltext, organisation-name-buyer= för köpare (inte TD~/BN~)
+# Sökfrågor — HAST Utveckling: ledarskap, utbildning, organisationsutveckling
+# TED v3 API: FT= för fulltext, classification-cpv= för CPV-koder
 QUERIES = [
-    # Kollektivtrafik-IT specifika CPV-koder (passagerarinfo, realtid)
-    "CY=SWE AND (classification-cpv=48813* OR classification-cpv=48814*) AND publication-date>20240101",
-    # IT-tjänster + transport-nyckelord (fulltext)
-    "CY=SWE AND classification-cpv=72* AND (FT=kollektivtrafik OR FT=realtid OR FT=trafikledning OR FT=passagerarinformation OR FT=biljettsystem OR FT=serviceresor) AND publication-date>20240101",
-    # Transporttjänster + system-nyckelord
-    "CY=SWE AND classification-cpv=60* AND (FT=system OR FT=plattform OR FT=realtid) AND publication-date>20240101",
-    # Bred sökning — kända transportköpare + IT-CPV
-    "CY=SWE AND (classification-cpv=48* OR classification-cpv=72*) AND (organisation-name-buyer=Skånetrafiken OR organisation-name-buyer=Västtrafik OR organisation-name-buyer=Samtrafiken OR organisation-name-buyer=Hallandstrafiken OR organisation-name-buyer=Östgötatrafiken) AND publication-date>20240101",
-    # Anropsstyrd trafik / serviceresor — ofta Hogia-relevant
-    "CY=SWE AND (FT=anropsstyrd OR FT=samordningscentral OR FT=bokningssystem) AND (classification-cpv=48* OR classification-cpv=72* OR classification-cpv=60*) AND publication-date>20240101",
+    # Kärnkoder — chefsutbildning, personalutveckling, coaching
+    "CY=SWE AND (classification-cpv=80532000 OR classification-cpv=79633000 OR classification-cpv=79632000 OR classification-cpv=79998000) AND publication-date>20240101",
+    # Personalutbildning & personlig utveckling
+    "CY=SWE AND (classification-cpv=80511000 OR classification-cpv=80570000 OR classification-cpv=80590000) AND publication-date>20240101",
+    # Managementkonsult + utbildnings-nyckelord
+    "CY=SWE AND (classification-cpv=79414000 OR classification-cpv=79411100 OR classification-cpv=79410000) AND (FT=ledarskap OR FT=utbildning OR FT=coaching OR FT=organisation OR FT=kompetens) AND publication-date>20240101",
+    # Fulltext — ledarskap & chefsutveckling
+    "CY=SWE AND (FT=ledarskapsutbildning OR FT=ledarskapsutveckling OR FT=chefsutveckling OR FT=chefsutbildning OR FT=ledarskapsprogram) AND publication-date>20240101",
+    # Fulltext — organisationsutveckling, teamutveckling, coaching
+    "CY=SWE AND (FT=organisationsutveckling OR FT=teamutveckling OR FT=kompetensutveckling OR FT=förändringsledning OR FT=konflikthantering OR FT=stresshantering) AND publication-date>20240101",
 ]
 
 PAGE_SIZE = 50
@@ -47,7 +52,7 @@ MAX_PAGES = 4
 class TedScraper(BaseScraper):
     name = "ted"
 
-    def fetch(self) -> list[dict]:
+    def fetch(self) -> list[TenderRecord]:
         seen_ids: set[str] = set()
         results = []
 
@@ -58,7 +63,7 @@ class TedScraper(BaseScraper):
         print(f"[TED] Hämtade {len(results)} upphandlingar totalt")
         return results
 
-    def _fetch_query(self, query: str, seen_ids: set[str]) -> list[dict]:
+    def _fetch_query(self, query: str, seen_ids: set[str]) -> list[TenderRecord]:
         results = []
         page = 1
 
@@ -70,12 +75,11 @@ class TedScraper(BaseScraper):
                 "page": page,
             }
             try:
-                resp = httpx.post(SEARCH_URL, json=payload, timeout=30)
-                if resp.status_code == 429:
-                    print("[TED] Rate limit — väntar 5s...")
-                    time.sleep(5)
-                    resp = httpx.post(SEARCH_URL, json=payload, timeout=30)
-                resp.raise_for_status()
+                def _do_request(p=payload):
+                    r = httpx.post(SEARCH_URL, json=p, timeout=30)
+                    r.raise_for_status()
+                    return r
+                resp = with_backoff(_do_request)
             except httpx.HTTPError as e:
                 print(f"[TED] HTTP-fel: {e}")
                 break
@@ -92,7 +96,9 @@ class TedScraper(BaseScraper):
                 if pub_nr in seen_ids:
                     continue
                 seen_ids.add(pub_nr)
-                results.append(self._normalize(notice))
+                record = self._normalize(notice)
+                if record:
+                    results.append(record)
 
             if len(notices) < PAGE_SIZE:
                 break
@@ -100,8 +106,8 @@ class TedScraper(BaseScraper):
 
         return results
 
-    def _normalize(self, notice: dict) -> dict:
-        """Mappa TED API-fält till vårt schema."""
+    def _normalize(self, notice: dict) -> TenderRecord | None:
+        """Mappa TED API-fält till TenderRecord."""
         title = self._extract_text(notice.get("notice-title"), "Utan titel")
         buyer = self._extract_text(notice.get("organisation-name-buyer"))
         desc = (
@@ -113,7 +119,6 @@ class TedScraper(BaseScraper):
         geography = "Sverige"
         title_clean = title
         if "–" in title:
-            # Nyare format: "Sverige – Kollektivtrafik – ..."
             parts = title.split("–")
             if len(parts) >= 2:
                 geography = parts[0].replace("Sverige", "").strip().strip("–").strip()
@@ -144,22 +149,35 @@ class TedScraper(BaseScraper):
         est_value = notice.get("estimated-value-proc")
         est_cur = notice.get("estimated-value-cur-proc")
 
-        return {
-            "source": "ted",
-            "source_id": pub_number,
-            "title": title_clean,
-            "buyer": buyer if buyer else None,
-            "geography": geography,
-            "cpv_codes": str(cpv) if cpv else None,
-            "procedure_type": None,
-            "published_date": notice.get("publication-date", "")[:10] if notice.get("publication-date") else None,
-            "deadline": str(deadline)[:10] if deadline else None,
-            "estimated_value": self._parse_value(est_value),
-            "currency": str(est_cur) if est_cur else "SEK",
-            "status": "published",
-            "url": url,
-            "description": str(desc)[:2000] if desc else None,
-        }
+        # Determine status — flag as needs_review if key fields are missing
+        status = "published"
+        if not title or title == "Utan titel":
+            status = "needs_review"
+            logger.warning("[TED] Notice %s missing title", pub_number)
+        if not pub_number:
+            logger.warning("[TED] Notice missing publication-number, skipping")
+            return None
+
+        try:
+            return TenderRecord(
+                source="ted",
+                source_id=pub_number,
+                title=title_clean,
+                buyer=buyer if buyer else None,
+                geography=geography,
+                cpv_codes=str(cpv) if cpv else None,
+                procedure_type=None,
+                published_date=notice.get("publication-date", "")[:10] if notice.get("publication-date") else None,
+                deadline=str(deadline)[:10] if deadline else None,
+                estimated_value=self._parse_value(est_value),
+                currency=str(est_cur) if est_cur else "SEK",
+                status=status,
+                url=url,
+                description=str(desc)[:2000] if desc else None,
+            )
+        except Exception as e:
+            logger.warning("[TED] Failed to create TenderRecord for %s: %s", pub_number, e)
+            return None
 
     @staticmethod
     def _extract_text(val, default: str = "") -> str:
@@ -169,7 +187,6 @@ class TedScraper(BaseScraper):
         if isinstance(val, str):
             return val
         if isinstance(val, dict):
-            # Värdet kan vara en sträng eller en lista av strängar
             raw = val.get("swe") or val.get("SWE") or val.get("eng") or val.get("ENG")
             if raw is None:
                 raw = next(iter(val.values()), default)

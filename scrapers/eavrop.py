@@ -6,34 +6,48 @@ ASP.NET WebForms with ViewState-based pagination.
 
 from __future__ import annotations
 
+import logging
 import re
 import httpx
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
+from .backoff import with_backoff
+from models import TenderRecord
+
+logger = logging.getLogger(__name__)
 
 LIST_URL = "https://www.e-avrop.com/e-upphandling/Default.aspx"
 BASE_URL = "https://www.e-avrop.com"
 MAX_PAGES = 4  # ~25 per page → ~100 max
 
-# Klientsidigt relevansfilter — nyckelord som indikerar potentiell relevans
+# Klientsidigt relevansfilter — nyckelord som indikerar potentiell relevans för HAST
 RELEVANCE_KEYWORDS = [
-    "kollektivtrafik", "realtid", "trafikledning", "it-system",
-    "biljettsystem", "passagerarinformation", "72000000", "48000000",
-    "reseplanerare", "anropsstyrd", "färdtjänst", "serviceresor",
-    "trafikinformation", "hållplats", "realtidsinformation",
+    "utbildning", "ledarskap", "ledarskapsutveckling", "chefsutveckling",
+    "chefsutbildning", "kompetensutveckling", "organisationsutveckling",
+    "teamutveckling", "coaching", "coachning", "mentorskap", "handledning",
+    "konflikthantering", "stresshantering", "arbetsmiljö", "förändringsledning",
+    "seminarium", "workshop", "föreläsning", "teambuilding",
+    "personalutveckling", "medarbetarutveckling", "hr-tjänster",
+    "kompetensförsörjning", "ledarskapsprogram", "chefsprogram",
+    "managementkonsult", "organisationskonsult",
+    "80000000", "80500000", "80530000", "80570000",  # CPV utbildning
+    "79414000", "79411000",  # CPV HR/management-konsult
 ]
 
 
 class EAvropScraper(BaseScraper):
     name = "eavrop"
 
-    def fetch(self) -> list[dict]:
-        all_results: list[dict] = []
+    def fetch(self) -> list[TenderRecord]:
+        all_results: list[TenderRecord] = []
         try:
             with httpx.Client(timeout=30, follow_redirects=True) as client:
-                resp = client.get(LIST_URL)
-                resp.raise_for_status()
+                def _get_initial():
+                    r = client.get(LIST_URL)
+                    r.raise_for_status()
+                    return r
+                resp = with_backoff(_get_initial)
 
                 page_results = self._parse_listing(resp.text)
                 all_results.extend(page_results)
@@ -43,8 +57,11 @@ class EAvropScraper(BaseScraper):
                     form_data = self._build_postback(resp.text, page_num)
                     if not form_data:
                         break
-                    resp = client.post(LIST_URL, data=form_data)
-                    resp.raise_for_status()
+                    def _post_page(data=form_data):
+                        r = client.post(LIST_URL, data=data)
+                        r.raise_for_status()
+                        return r
+                    resp = with_backoff(_post_page)
                     page_results = self._parse_listing(resp.text)
                     if not page_results:
                         break
@@ -59,12 +76,12 @@ class EAvropScraper(BaseScraper):
         return filtered
 
     @staticmethod
-    def _is_potentially_relevant(proc: dict) -> bool:
+    def _is_potentially_relevant(proc: TenderRecord) -> bool:
         """Check if a procurement is potentially relevant based on keywords."""
-        text = f"{proc.get('title', '')} {proc.get('cpv_codes', '')} {proc.get('buyer', '')}".lower()
+        text = f"{proc.title or ''} {proc.cpv_codes or ''} {proc.buyer or ''}".lower()
         return any(kw in text for kw in RELEVANCE_KEYWORDS)
 
-    def _parse_listing(self, html: str) -> list[dict]:
+    def _parse_listing(self, html: str) -> list[TenderRecord]:
         """Parse all rows from the ASP.NET GridView table."""
         soup = BeautifulSoup(html, "html.parser")
         table = (
@@ -75,7 +92,7 @@ class EAvropScraper(BaseScraper):
             return []
 
         rows = table.select("tr")
-        notices: list[dict] = []
+        notices: list[TenderRecord] = []
 
         # Skip header row(s) — they contain <th> elements
         for row in rows:
@@ -90,7 +107,7 @@ class EAvropScraper(BaseScraper):
                 continue
         return notices
 
-    def _parse_listing_row(self, row) -> dict | None:
+    def _parse_listing_row(self, row) -> TenderRecord | None:
         """Extract procurement data from a single table row."""
         cells = row.select("td")
         if len(cells) < 5:
@@ -116,22 +133,32 @@ class EAvropScraper(BaseScraper):
         cpv_codes = cells[3].get_text(strip=True) or None
         deadline = self._extract_date(cells[4].get_text(strip=True))
 
-        return {
-            "source": "eavrop",
-            "source_id": f"EA-{source_id}",
-            "title": title,
-            "buyer": buyer,
-            "geography": None,
-            "cpv_codes": cpv_codes,
-            "procedure_type": None,
-            "published_date": published_date,
-            "deadline": deadline,
-            "estimated_value": None,
-            "currency": "SEK",
-            "status": "published",
-            "url": url,
-            "description": None,
-        }
+        # Flag as needs_review if title is suspiciously short
+        status = "published"
+        if len(title) < 5:
+            status = "needs_review"
+            logger.warning("[e-Avrop] Notice EA-%s has very short title: %s", source_id, title)
+
+        try:
+            return TenderRecord(
+                source="eavrop",
+                source_id=f"EA-{source_id}",
+                title=title,
+                buyer=buyer,
+                geography=None,
+                cpv_codes=cpv_codes,
+                procedure_type=None,
+                published_date=published_date,
+                deadline=deadline,
+                estimated_value=None,
+                currency="SEK",
+                status=status,
+                url=url,
+                description=None,
+            )
+        except Exception as e:
+            logger.warning("[e-Avrop] Failed to create TenderRecord for EA-%s: %s", source_id, e)
+            return None
 
     @staticmethod
     def _extract_date(text: str | None) -> str | None:
