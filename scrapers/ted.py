@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta
+
 import httpx
 from .base import BaseScraper
 from .backoff import with_backoff
@@ -30,20 +32,27 @@ FIELDS = [
     "estimated-value-cur-proc",
 ]
 
+# Dynamic date cutoff — 6 months ago
+def _date_cutoff() -> str:
+    return (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
+
+
 # Sökfrågor — HAST Utveckling: ledarskap, utbildning, organisationsutveckling
 # TED v3 API: FT= för fulltext, classification-cpv= för CPV-koder
-QUERIES = [
-    # Kärnkoder — chefsutbildning, personalutveckling, coaching
-    "CY=SWE AND (classification-cpv=80532000 OR classification-cpv=79633000 OR classification-cpv=79632000 OR classification-cpv=79998000) AND publication-date>20240101",
-    # Personalutbildning & personlig utveckling
-    "CY=SWE AND (classification-cpv=80511000 OR classification-cpv=80570000 OR classification-cpv=80590000) AND publication-date>20240101",
-    # Managementkonsult + utbildnings-nyckelord
-    "CY=SWE AND (classification-cpv=79414000 OR classification-cpv=79411100 OR classification-cpv=79410000) AND (FT=ledarskap OR FT=utbildning OR FT=coaching OR FT=organisation OR FT=kompetens) AND publication-date>20240101",
-    # Fulltext — ledarskap & chefsutveckling
-    "CY=SWE AND (FT=ledarskapsutbildning OR FT=ledarskapsutveckling OR FT=chefsutveckling OR FT=chefsutbildning OR FT=ledarskapsprogram) AND publication-date>20240101",
-    # Fulltext — organisationsutveckling, teamutveckling, coaching
-    "CY=SWE AND (FT=organisationsutveckling OR FT=teamutveckling OR FT=kompetensutveckling OR FT=förändringsledning OR FT=konflikthantering OR FT=stresshantering) AND publication-date>20240101",
-]
+def _build_queries() -> list[str]:
+    cutoff = _date_cutoff()
+    return [
+        # Kärnkoder — chefsutbildning, personalutveckling, coaching
+        f"CY=SWE AND (classification-cpv=80532000 OR classification-cpv=79633000 OR classification-cpv=79632000 OR classification-cpv=79998000) AND publication-date>{cutoff}",
+        # Personalutbildning & personlig utveckling
+        f"CY=SWE AND (classification-cpv=80511000 OR classification-cpv=80570000 OR classification-cpv=80590000) AND publication-date>{cutoff}",
+        # Managementkonsult + utbildnings-nyckelord
+        f"CY=SWE AND (classification-cpv=79414000 OR classification-cpv=79411100 OR classification-cpv=79410000) AND (FT=ledarskap OR FT=utbildning OR FT=coaching OR FT=organisation OR FT=kompetens) AND publication-date>{cutoff}",
+        # Fulltext — ledarskap & chefsutveckling
+        f"CY=SWE AND (FT=ledarskapsutbildning OR FT=ledarskapsutveckling OR FT=chefsutveckling OR FT=chefsutbildning OR FT=ledarskapsprogram) AND publication-date>{cutoff}",
+        # Fulltext — organisationsutveckling, teamutveckling, coaching
+        f"CY=SWE AND (FT=organisationsutveckling OR FT=teamutveckling OR FT=kompetensutveckling OR FT=förändringsledning OR FT=konflikthantering OR FT=stresshantering) AND publication-date>{cutoff}",
+    ]
 
 PAGE_SIZE = 50
 MAX_PAGES = 4
@@ -56,7 +65,7 @@ class TedScraper(BaseScraper):
         seen_ids: set[str] = set()
         results = []
 
-        for query in QUERIES:
+        for query in _build_queries():
             query_results = self._fetch_query(query, seen_ids)
             results.extend(query_results)
 

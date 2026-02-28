@@ -20,6 +20,8 @@ credentials:
       name: Peter Nilsson
       password: "$2b$12$7kleKF2fAbD./5Vxvj3ZEOp.F9EQYAQll6NYKPCol3l1/3NIoyZmm"  # changeme123
       role: saljchef
+# Note: admin/admin login is hardcoded in auth.py, not managed via this file.
+# This file only contains KAM and Saljchef users for streamlit-authenticator.
 cookie:
   expiry_days: 30
   key: upphandling_cookie_key_change_me

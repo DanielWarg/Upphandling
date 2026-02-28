@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 DB_PATH = Path(__file__).parent / "upphandlingar.db"
 
@@ -263,6 +263,138 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def archive_expired_procurements() -> int:
+    """Mark procurements with passed deadline as 'expired'. Returns count."""
+    conn = get_connection()
+    cur = conn.execute("""
+        UPDATE procurements
+        SET status = 'expired', updated_at = datetime('now')
+        WHERE deadline IS NOT NULL
+          AND deadline < date('now')
+          AND status != 'expired'
+    """)
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+def purge_old_expired(days: int = 180) -> int:
+    """Delete procurements that have been expired for >days days.
+
+    Also cascades to analyses, labels, and pipeline.
+    Returns number of deleted procurements.
+    """
+    conn = get_connection()
+    cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # Find old expired IDs
+    rows = conn.execute("""
+        SELECT id FROM procurements
+        WHERE status = 'expired'
+          AND deadline IS NOT NULL
+          AND deadline < ?
+    """, (cutoff,)).fetchall()
+
+    if not rows:
+        conn.close()
+        return 0
+
+    ids = [r["id"] for r in rows]
+    placeholders = ",".join("?" * len(ids))
+
+    conn.execute(f"DELETE FROM analyses WHERE procurement_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM labels WHERE procurement_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM pipeline WHERE procurement_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM procurement_notes WHERE procurement_id IN ({placeholders})", ids)
+    conn.execute(f"DELETE FROM procurements WHERE id IN ({placeholders})", ids)
+
+    conn.commit()
+    conn.close()
+    return len(ids)
+
+
+def cross_source_deduplicate() -> int:
+    """Deduplicate across sources via fuzzy title+buyer matching.
+
+    Normalizes titles (strips common prefixes like 'Sverige - Typ - '),
+    groups by normalized_title + buyer, keeps the row with most complete data,
+    and merges non-NULL fields from duplicates into the keeper.
+    Returns number of deleted rows.
+    """
+    import re
+    conn = get_connection()
+    all_procs = conn.execute("SELECT * FROM procurements ORDER BY id").fetchall()
+    all_procs = [dict(r) for r in all_procs]
+
+    def normalize_title(title: str) -> str:
+        t = title.lower().strip()
+        # Strip common TED prefix patterns: "Sverige – City – " or "Sverige-City:"
+        t = re.sub(r"^sverige\s*[-–]\s*[^–:]+\s*[-–:]\s*", "", t)
+        # Strip leading/trailing whitespace and punctuation
+        t = t.strip(" :-–")
+        return t
+
+    def normalize_buyer(buyer: str | None) -> str:
+        if not buyer:
+            return ""
+        return buyer.lower().strip()
+
+    # Group by (normalized_title, normalized_buyer)
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for p in all_procs:
+        key = (normalize_title(p["title"]), normalize_buyer(p.get("buyer")))
+        groups.setdefault(key, []).append(p)
+
+    deleted_ids: list[int] = []
+    merge_fields = ["buyer", "geography", "cpv_codes", "deadline", "estimated_value",
+                    "description", "url", "procedure_type", "published_date"]
+
+    for key, procs in groups.items():
+        if len(procs) < 2:
+            continue
+        # Same source duplicates already handled by deduplicate_procurements
+        sources = {p["source"] for p in procs}
+        if len(sources) < 2:
+            continue
+
+        # Score completeness: count non-NULL fields
+        def completeness(p: dict) -> int:
+            return sum(1 for f in merge_fields if p.get(f))
+
+        procs.sort(key=lambda p: (completeness(p), p.get("score") or 0, p["id"]), reverse=True)
+        keeper = procs[0]
+
+        # Merge fields from duplicates into keeper
+        for dupe in procs[1:]:
+            updates = {}
+            for f in merge_fields:
+                if not keeper.get(f) and dupe.get(f):
+                    updates[f] = dupe[f]
+                    keeper[f] = dupe[f]  # Track merged state
+
+            if updates:
+                set_clause = ", ".join(f"{f} = ?" for f in updates)
+                conn.execute(
+                    f"UPDATE procurements SET {set_clause}, updated_at = datetime('now') WHERE id = ?",
+                    [*updates.values(), keeper["id"]],
+                )
+
+            deleted_ids.append(dupe["id"])
+
+    if deleted_ids:
+        placeholders = ",".join("?" * len(deleted_ids))
+        conn.execute(f"DELETE FROM analyses WHERE procurement_id IN ({placeholders})", deleted_ids)
+        conn.execute(f"DELETE FROM labels WHERE procurement_id IN ({placeholders})", deleted_ids)
+        conn.execute(f"DELETE FROM pipeline WHERE procurement_id IN ({placeholders})", deleted_ids)
+        conn.execute(f"DELETE FROM procurement_notes WHERE procurement_id IN ({placeholders})", deleted_ids)
+        conn.execute(f"DELETE FROM procurements WHERE id IN ({placeholders})", deleted_ids)
+
+    conn.commit()
+    conn.close()
+    return len(deleted_ids)
 
 
 def deduplicate_procurements() -> int:
@@ -1249,6 +1381,133 @@ def mark_all_notifications_read(username: str):
 
 
 # =====================================================================
+# User sync & seeding
+# =====================================================================
+
+def sync_users_from_yaml() -> int:
+    """Sync users table from config/users.yaml. Returns count synced."""
+    from pathlib import Path
+    import yaml
+
+    config_path = Path(__file__).parent / "config" / "users.yaml"
+    if not config_path.exists():
+        return 0
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    usernames = config.get("credentials", {}).get("usernames", {})
+    conn = get_connection()
+
+    # Ensure admin role is valid in CHECK constraint — update if needed
+    _user_cols = conn.execute("PRAGMA table_info(users)").fetchall()
+    # The CHECK constraint on role only allows kam/saljchef — we need to handle admin separately
+    # Admin is not stored in users table (hardcoded in auth.py)
+
+    count = 0
+    for username, data in usernames.items():
+        role = data.get("role", "kam")
+        if role not in ("kam", "saljchef"):
+            continue  # Skip non-standard roles
+        conn.execute("""
+            INSERT INTO users (username, display_name, role, email)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                display_name = excluded.display_name,
+                role = excluded.role,
+                email = excluded.email
+        """, (username, data.get("name", username), role, data.get("email", "")))
+        count += 1
+
+    conn.commit()
+    conn.close()
+    return count
+
+
+def seed_default_watches(username: str) -> int:
+    """Create default watches for a user. Returns count created."""
+    conn = get_connection()
+
+    # Default keywords relevant to HAST Utveckling
+    default_keywords = [
+        "ledarskap", "coaching", "chefsutbildning", "organisationsutveckling",
+        "kompetensutveckling", "ledarskapsutveckling",
+    ]
+
+    count = 0
+    for kw in default_keywords:
+        # Check if already exists
+        existing = conn.execute(
+            "SELECT id FROM watch_list WHERE user_username = ? AND keyword = ? AND watch_type = 'keyword'",
+            (username, kw),
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO watch_list (user_username, keyword, watch_type) VALUES (?, ?, 'keyword')",
+                (username, kw),
+            )
+            count += 1
+
+    # Account watches for all seeded accounts
+    accounts = conn.execute("SELECT id FROM accounts").fetchall()
+    for acc in accounts:
+        existing = conn.execute(
+            "SELECT id FROM watch_list WHERE user_username = ? AND account_id = ? AND watch_type = 'account'",
+            (username, acc["id"]),
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO watch_list (user_username, account_id, watch_type) VALUES (?, ?, 'account')",
+                (username, acc["id"]),
+            )
+            count += 1
+
+    conn.commit()
+    conn.close()
+    return count
+
+
+def create_deadline_calendar_events() -> int:
+    """Auto-create calendar events for procurements with deadline within 30 days.
+
+    Creates events for the 'admin' user (visible to all).
+    Returns count created.
+    """
+    conn = get_connection()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d")
+
+    procs = conn.execute("""
+        SELECT id, title, deadline, buyer FROM procurements
+        WHERE deadline IS NOT NULL
+          AND deadline >= ?
+          AND deadline <= ?
+          AND status != 'expired'
+    """, (today, cutoff)).fetchall()
+
+    count = 0
+    for p in procs:
+        # Check if event already exists for this procurement+date
+        existing = conn.execute(
+            "SELECT id FROM calendar_events WHERE procurement_id = ? AND event_date = ?",
+            (p["id"], p["deadline"]),
+        ).fetchone()
+        if not existing:
+            title = f"Deadline: {(p['title'] or '')[:60]}"
+            desc = f"Kopare: {p['buyer'] or 'Okand'}"
+            conn.execute("""
+                INSERT INTO calendar_events
+                    (user_username, title, event_date, event_type, procurement_id, description)
+                VALUES (?, ?, ?, 'deadline', ?, ?)
+            """, ("admin", title, p["deadline"], p["id"], desc))
+            count += 1
+
+    conn.commit()
+    conn.close()
+    return count
+
+
+# =====================================================================
 # Seed data
 # =====================================================================
 
@@ -1273,7 +1532,7 @@ SEED_ACCOUNTS = [
 
 
 def seed_accounts():
-    """Seed accounts table with known Hogia customers."""
+    """Seed accounts table with known HAST Utveckling target customers."""
     conn = get_connection()
     for name, aliases, region in SEED_ACCOUNTS:
         conn.execute(

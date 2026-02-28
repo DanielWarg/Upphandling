@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import bcrypt
 import streamlit as st
 import yaml
 import streamlit_authenticator as stauth
@@ -9,10 +10,24 @@ import streamlit_authenticator as stauth
 
 CONFIG_PATH = Path(__file__).parent / "config" / "users.yaml"
 
+# Admin credentials — injected into authenticator config at runtime
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin"
+_ADMIN_HASH = bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode()
+
 
 def _load_config() -> dict:
     with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+
+    # Inject admin user into credentials so authenticator handles it natively
+    config["credentials"]["usernames"][ADMIN_USERNAME] = {
+        "name": "Administratör",
+        "password": _ADMIN_HASH,
+        "email": "",
+        "role": "admin",
+    }
+    return config
 
 
 def _get_authenticator() -> stauth.Authenticate:
@@ -32,6 +47,7 @@ def check_auth() -> bool:
     """Show login form and return True if authenticated.
 
     Must be called at top of app.py — halts rendering if not logged in.
+    Admin credentials are injected into the authenticator at runtime.
     """
     authenticator = _get_authenticator()
     authenticator.login(location="main")
@@ -83,7 +99,8 @@ def render_sidebar_user():
     if not user:
         return
 
-    role_label = "Säljchef" if user["role"] == "saljchef" else "KAM"
+    role_labels = {"saljchef": "Säljchef", "kam": "KAM", "admin": "Admin"}
+    role_label = role_labels.get(user["role"], user["role"])
 
     st.sidebar.markdown(
         f'<div style="padding:12px 16px;background:var(--bg-2);border:1px solid var(--border);'

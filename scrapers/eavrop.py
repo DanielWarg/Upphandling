@@ -2,6 +2,7 @@
 
 Scrapes the public procurement listing at e-avrop.com/e-upphandling/Default.aspx.
 ASP.NET WebForms with ViewState-based pagination.
+Server-side filtering handles relevance — no client-side double-filtering.
 """
 
 from __future__ import annotations
@@ -19,21 +20,7 @@ logger = logging.getLogger(__name__)
 
 LIST_URL = "https://www.e-avrop.com/e-upphandling/Default.aspx"
 BASE_URL = "https://www.e-avrop.com"
-MAX_PAGES = 4  # ~25 per page → ~100 max
-
-# Klientsidigt relevansfilter — nyckelord som indikerar potentiell relevans för HAST
-RELEVANCE_KEYWORDS = [
-    "utbildning", "ledarskap", "ledarskapsutveckling", "chefsutveckling",
-    "chefsutbildning", "kompetensutveckling", "organisationsutveckling",
-    "teamutveckling", "coaching", "coachning", "mentorskap", "handledning",
-    "konflikthantering", "stresshantering", "arbetsmiljö", "förändringsledning",
-    "seminarium", "workshop", "föreläsning", "teambuilding",
-    "personalutveckling", "medarbetarutveckling", "hr-tjänster",
-    "kompetensförsörjning", "ledarskapsprogram", "chefsprogram",
-    "managementkonsult", "organisationskonsult",
-    "80000000", "80500000", "80530000", "80570000",  # CPV utbildning
-    "79414000", "79411000",  # CPV HR/management-konsult
-]
+MAX_PAGES = 6
 
 
 class EAvropScraper(BaseScraper):
@@ -49,7 +36,7 @@ class EAvropScraper(BaseScraper):
                     return r
                 resp = with_backoff(_get_initial)
 
-                page_results = self._parse_listing(resp.text)
+                page_results = self._parse_listing(resp.text, client)
                 all_results.extend(page_results)
 
                 # Paginate using ASP.NET PostBack
@@ -62,7 +49,7 @@ class EAvropScraper(BaseScraper):
                         r.raise_for_status()
                         return r
                     resp = with_backoff(_post_page)
-                    page_results = self._parse_listing(resp.text)
+                    page_results = self._parse_listing(resp.text, client)
                     if not page_results:
                         break
                     all_results.extend(page_results)
@@ -70,18 +57,11 @@ class EAvropScraper(BaseScraper):
         except Exception as e:
             print(f"[e-Avrop] Fetch error: {e}")
 
-        # Klientsidigt relevansfilter — returnera bara potentiellt relevanta
-        filtered = [r for r in all_results if self._is_potentially_relevant(r)]
-        print(f"[e-Avrop] Fetched {len(all_results)} notices, {len(filtered)} potentiellt relevanta efter filtrering")
-        return filtered
+        # No client-side filtering — return all results, scorer handles relevance
+        print(f"[e-Avrop] Fetched {len(all_results)} notices")
+        return all_results
 
-    @staticmethod
-    def _is_potentially_relevant(proc: TenderRecord) -> bool:
-        """Check if a procurement is potentially relevant based on keywords."""
-        text = f"{proc.title or ''} {proc.cpv_codes or ''} {proc.buyer or ''}".lower()
-        return any(kw in text for kw in RELEVANCE_KEYWORDS)
-
-    def _parse_listing(self, html: str) -> list[TenderRecord]:
+    def _parse_listing(self, html: str, client: httpx.Client | None = None) -> list[TenderRecord]:
         """Parse all rows from the ASP.NET GridView table."""
         soup = BeautifulSoup(html, "html.parser")
         table = (
@@ -94,12 +74,11 @@ class EAvropScraper(BaseScraper):
         rows = table.select("tr")
         notices: list[TenderRecord] = []
 
-        # Skip header row(s) — they contain <th> elements
         for row in rows:
             if row.find("th"):
                 continue
             try:
-                proc = self._parse_listing_row(row)
+                proc = self._parse_listing_row(row, client)
                 if proc:
                     notices.append(proc)
             except Exception as e:
@@ -107,20 +86,19 @@ class EAvropScraper(BaseScraper):
                 continue
         return notices
 
-    def _parse_listing_row(self, row) -> TenderRecord | None:
+    def _parse_listing_row(self, row, client: httpx.Client | None = None) -> TenderRecord | None:
         """Extract procurement data from a single table row."""
         cells = row.select("td")
         if len(cells) < 5:
             return None
 
-        # Column order: Rubrik | Publicerad | Organisation | Område | Deadline
+        # Column order: Rubrik | Publicerad | Organisation | Omrade | Deadline
         link = cells[0].select_one("a[href]")
         title = cells[0].get_text(strip=True)
         if not title:
             return None
 
         href = link.get("href", "") if link else ""
-        # Detail URL: /[org]/visa/upphandling.aspx?id=[id]
         url = f"{BASE_URL}/{href.lstrip('/')}" if href and not href.startswith("http") else href
 
         # Extract source_id from URL query param
@@ -132,6 +110,12 @@ class EAvropScraper(BaseScraper):
         buyer = cells[2].get_text(strip=True) or None
         cpv_codes = cells[3].get_text(strip=True) or None
         deadline = self._extract_date(cells[4].get_text(strip=True))
+
+        # Fetch description and geography from detail page
+        description = None
+        geography = None
+        if client and url:
+            description, geography = self._fetch_detail(client, url)
 
         # Flag as needs_review if title is suspiciously short
         status = "published"
@@ -145,7 +129,7 @@ class EAvropScraper(BaseScraper):
                 source_id=f"EA-{source_id}",
                 title=title,
                 buyer=buyer,
-                geography=None,
+                geography=geography,
                 cpv_codes=cpv_codes,
                 procedure_type=None,
                 published_date=published_date,
@@ -154,15 +138,61 @@ class EAvropScraper(BaseScraper):
                 currency="SEK",
                 status=status,
                 url=url,
-                description=None,
+                description=description,
             )
         except Exception as e:
             logger.warning("[e-Avrop] Failed to create TenderRecord for EA-%s: %s", source_id, e)
             return None
 
     @staticmethod
+    def _fetch_detail(client: httpx.Client, detail_url: str) -> tuple[str | None, str | None]:
+        """Fetch description and geography from the detail page.
+
+        Returns (description, geography).
+        """
+        try:
+            def _get():
+                r = client.get(detail_url, timeout=15)
+                r.raise_for_status()
+                return r
+            resp = with_backoff(_get)
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Extract description
+            description = None
+            for label_text in ["Beskrivning", "Beskrivning av upphandlingen", "Varugrupp"]:
+                label = soup.find(string=re.compile(label_text, re.IGNORECASE))
+                if label:
+                    parent = label.find_parent(["dt", "th", "label", "strong", "b", "div", "td"])
+                    if parent:
+                        sibling = parent.find_next_sibling(["dd", "td", "span", "div", "p"])
+                        if sibling:
+                            text = sibling.get_text(strip=True)
+                            if text and len(text) > 10:
+                                description = text[:2000]
+                                break
+
+            # Extract geography
+            geography = None
+            for label_text in ["Leveransort", "Ort", "Kommun", "Region", "NUTS"]:
+                label = soup.find(string=re.compile(label_text, re.IGNORECASE))
+                if label:
+                    parent = label.find_parent(["dt", "th", "label", "strong", "b", "div", "td"])
+                    if parent:
+                        sibling = parent.find_next_sibling(["dd", "td", "span", "div"])
+                        if sibling:
+                            text = sibling.get_text(strip=True)
+                            if text and len(text) > 1:
+                                geography = text
+                                break
+
+            return description, geography
+        except Exception:
+            return None, None
+
+    @staticmethod
     def _extract_date(text: str | None) -> str | None:
-        """Extract a YYYY-MM-DD date from cell text, stripping trailing labels."""
+        """Extract a YYYY-MM-DD date from cell text."""
         if not text:
             return None
         m = re.search(r"\d{4}-\d{2}-\d{2}", text)
@@ -183,7 +213,6 @@ class EAvropScraper(BaseScraper):
             "__VIEWSTATE": viewstate.get("value", ""),
         }
 
-        # Include other ASP.NET hidden fields if present
         for field_name in ("__VIEWSTATEGENERATOR", "__EVENTVALIDATION", "__VIEWSTATEENCRYPTED"):
             field = soup.find("input", {"name": field_name})
             if field:

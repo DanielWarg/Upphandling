@@ -39,15 +39,15 @@ class TestEAvropParse:
         assert "id=5001" in results[0].url
 
 
-class TestEAvropRelevanceFilter:
-    def test_relevant_passes(self):
-        record = TenderRecord(
-            source="eavrop", source_id="EA-1", title="Ledarskapsutbildning",
-        )
-        assert EAvropScraper._is_potentially_relevant(record)
+class TestEAvropNoClientFilter:
+    """Client-side filtering removed — scorer handles relevance."""
 
-    def test_irrelevant_blocked(self):
-        record = TenderRecord(
-            source="eavrop", source_id="EA-2", title="Serverunderhall",
-        )
-        assert not EAvropScraper._is_potentially_relevant(record)
+    def test_all_results_returned(self):
+        """Verify _parse_listing returns all rows without filtering."""
+        scraper = EAvropScraper()
+        fixtures_dir = Path(__file__).parent / "fixtures"
+        with open(fixtures_dir / "eavrop_listing.html") as f:
+            html = f.read()
+        results = scraper._parse_listing(html)
+        # All 3 rows in fixture should be returned (no client filter)
+        assert len(results) == 3

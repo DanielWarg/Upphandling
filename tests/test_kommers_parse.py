@@ -48,22 +48,15 @@ class TestKommersParse:
         assert "ledarskapsutbildning" in results[0].description.lower()
 
 
-class TestKommersRelevanceFilter:
-    def test_relevant_passes(self):
-        record = TenderRecord(
-            source="kommers", source_id="KOM-1", title="Ledarskapsutbildning",
-        )
-        assert KommersScraper._is_potentially_relevant(record)
+class TestKommersNoClientFilter:
+    """Client-side filtering removed — scorer handles relevance."""
 
-    def test_irrelevant_blocked(self):
-        record = TenderRecord(
-            source="kommers", source_id="KOM-2", title="Kontorsstolar",
-        )
-        assert not KommersScraper._is_potentially_relevant(record)
-
-    def test_cpv_makes_relevant(self):
-        record = TenderRecord(
-            source="kommers", source_id="KOM-3", title="Tjanster",
-            cpv_codes="80500000",
-        )
-        assert KommersScraper._is_potentially_relevant(record)
+    def test_all_results_returned(self):
+        """Verify _parse_listing returns all rows without filtering."""
+        scraper = KommersScraper()
+        fixtures_dir = Path(__file__).parent / "fixtures"
+        with open(fixtures_dir / "kommers_listing.html") as f:
+            html = f.read()
+        results = scraper._parse_listing(html)
+        # All 3 rows in fixture should be returned (no client filter)
+        assert len(results) == 3

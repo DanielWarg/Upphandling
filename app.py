@@ -319,7 +319,7 @@ except Exception:
     pass
 
 # ---------------------------------------------------------------------------
-# Navigation — 2 pages
+# Navigation
 # ---------------------------------------------------------------------------
 from pages.my_page import render_my_page
 from pages.procurements import render_procurements
@@ -328,6 +328,11 @@ nav_pages = [
     st.Page(render_my_page, title="Min sida", default=True, url_path=""),
     st.Page(render_procurements, title="Upphandlingar", url_path="upphandlingar"),
 ]
+
+# Admin page — only visible for admin role
+if current_user["role"] == "admin":
+    from pages.admin import render_admin
+    nav_pages.append(st.Page(render_admin, title="Admin", url_path="admin"))
 
 pg = st.navigation(nav_pages)
 pg.run()
