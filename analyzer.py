@@ -450,7 +450,7 @@ ANALYSIS_TOOL = {
                 },
                 "matchningsanalys": {
                     "type": "string",
-                    "description": "Hur väl Hogias produkter matchar kraven (markdown)",
+                    "description": "Hur väl HAST:s tjänster matchar kraven (markdown)",
                 },
                 "prisstrategi": {
                     "type": "string",
