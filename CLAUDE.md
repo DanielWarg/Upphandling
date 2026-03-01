@@ -1,109 +1,79 @@
-# Upphandlingsbevakning — Fas2 Säljstöd
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Projekt
-Svenskt verktyg för att bevaka upphandlingar inom ledarskap, utbildning och organisationsutveckling åt HAST Utveckling. Scrapar TED, Mercell, KommersAnnons, e-Avrop och scorar leads. Fas2 utökar med flerannvändarstöd, pipeline-hantering, kundkonton, samarbete och notiser för HAST:s säljteam (3 KAM + 1 säljchef).
 
-## Teknikstack
-- Python 3.11+
-- Streamlit (frontend-dashboard, multi-page)
-- SQLite (databas, fil: upphandlingar.db, WAL-mode)
-- httpx (TED API)
-- Scrapling (webbskrapning: Mercell, KommersAnnons, e-Avrop)
-- pandas (datahantering)
-- llama-server + Ministral 3 14B (lokal AI-analys via OpenAI-kompatibelt API)
-- streamlit-authenticator (auth, bcrypt, cookie-sessions)
-- streamlit-sortables (drag & drop kanban)
-- streamlit-calendar (FullCalendar.js)
-
-## AI-analys
-- **Modell**: Ministral 3 14B (ENDA modellen vi kör — levererar bäst resultat)
-- **Server**: llama-server (INTE Ollama, INTE Qwen, INTE Gemini)
-- **Prefilter**: Snabb relevans-check per upphandling — filtrerar brus efter nyckelordsscoringen
-- **Djupanalys**: Function calling med strukturerad JSON-output (kravsammanfattning, matchning, prisstrategi, anbudshjälp)
-- **GGUF**: `~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf`
-- **Endpoint**: `LLM_BASE_URL=http://localhost:8081/v1` i `.env`
-- **Starta**: `llama-server --model ~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf --port 8081 --ctx-size 16384 --jinja`
-- **OBS**: Använd ALDRIG andra modeller (Qwen, Llama etc). Ministral 3 14B är testad och validerad.
+Svenskt verktyg för att bevaka upphandlingar inom ledarskap, utbildning och organisationsutveckling åt HAST Utveckling. Scrapar TED, KommersAnnons och e-Avrop, scorar leads med nyckelordsbaserad 2-stegs gate, kör AI-analys med Ministral 3 14B, och hanterar en 6-stegs säljpipeline för HAST:s säljteam (3 KAM + 1 säljchef + 1 admin).
 
 ## Kommandon
-- `python3 run_scrapers.py` — hämta alla källor + scora + AI-analys + pipeline + konto-länkning
-- `python3 run_scrapers.py --sources ted` — bara TED
-- `python3 run_scrapers.py --score-only` — omscora utan skrapning
-- `python3 run_scrapers.py --skip-analysis` — hoppa över djupanalys
-- `python3 run_scrapers.py --ollama-model <namn>` — välj annan LLM-modell
-- `streamlit run app.py` — starta dashboard
-- `python3 migrate.py` — migrera databas (Fas1 → Fas2)
-- `python3 migrate.py --status` — visa schemaversion
-- `python3 notify.py` — skicka väntande notiser (e-post/Slack)
-- `python3 reports.py` — generera veckorapport
-- `python3 reports.py --week 2026-W09` — specifik vecka
-- `python3 reports.py --email` — skicka rapport via e-post
 
-## Filstruktur
-```
-├── app.py                 # Streamlit dashboard (auth gate + routing)
-├── auth.py                # Autentisering (streamlit-authenticator wrapper)
-├── db.py                  # SQLite schema + CRUD (alla tabeller)
-├── scorer.py              # Nyckelordsscoring (2-stegs gate + scoring)
-├── analyzer.py            # AI-analys (Ollama/Gemini)
-├── predictions.py         # Historisk mönsteranalys + prediktion
-├── reports.py             # Veckorapport-generering (CLI + e-post)
-├── notify.py              # Bakgrundsnotiser (e-post/Slack, cron)
-├── migrate.py             # DB-migreringshanterare
-├── run_scrapers.py        # CLI-orchestrator (scraping + pipeline + konto-länkning)
-├── config/
-│   └── users.yaml         # Användarkonfiguration (bcrypt-hashade lösenord)
-├── pages/
-│   ├── my_page.py         # Personlig startsida (KAM/säljchef)
-│   ├── pipeline.py        # 6-stegs pipeline-kanban med drag & drop
-│   ├── team_overview.py   # Säljchefs teamöversikt
-│   ├── accounts.py        # Kundkonton med dashboard + kontakter + avtal
-│   ├── timeline.py        # Avtalstidslinje (visuell)
-│   ├── messages.py        # Intern chatt (st.chat_message)
-│   ├── calendar_page.py   # Delad kalender (streamlit-calendar)
-│   ├── notifications_page.py  # Notiscenter
-│   ├── reports.py         # Rapportsida (säljchef)
-│   └── integrations.py    # Integrationssida (säljchef)
-├── scrapers/
-│   ├── base.py, ted.py, mercell.py, kommers.py, eavrop.py
-├── integrations/
-│   ├── base.py            # BaseIntegration (ABC)
-│   ├── notion_stub.py     # Notion-stubb
-│   └── hubspot_stub.py    # HubSpot-stubb
-└── upphandlingar.db       # SQLite-databas (WAL-mode)
+```bash
+# Dashboard
+streamlit run app.py
+
+# Scraping + full pipeline
+python3 run_scrapers.py                    # alla källor
+python3 run_scrapers.py --sources ted      # bara TED
+python3 run_scrapers.py --score-only       # omscora utan skrapning
+python3 run_scrapers.py --skip-analysis    # hoppa över AI-djupanalys
+
+# Tester
+python3 -m pytest tests/ -v                                          # alla (71 st)
+python3 -m pytest tests/test_scorer.py -v                            # en fil
+python3 -m pytest tests/test_scorer.py::TestScoring::test_high_relevance_scores_high -v  # ett test
+
+# Databas
+python3 migrate.py --status                # visa schemaversion
+
+# AI-server (krävs för analys)
+llama-server --model ~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf --port 8081 --ctx-size 16384 --jinja
 ```
 
-## Databas (12 tabeller)
-- `procurements` — upphandlingar (+ account_id FK)
-- `analyses` — AI-analyser
-- `labels` — feedback-etiketter (+ user_username)
-- `users` — användare (kam/saljchef)
-- `pipeline` — 6-stegs säljpipeline (bevakad→vunnen/förlorad)
-- `procurement_notes` — anteckningar per upphandling
-- `accounts` — kundkonton (Västtrafik etc)
-- `contacts` — kontaktpersoner per konto
-- `user_dashboard` — personlig konto-dashboard per användare
-- `watch_list` — bevakningslistor (konto/nyckelord)
-- `contract_timeline` — avtal med start/slut/option
-- `messages` — intern kommunikation
-- `calendar_events` — manuella kalenderhändelser
-- `notifications` — notiser (in-app, e-post, Slack)
-- `schema_version` — migreringsversion
+## Arkitektur — Dataflöde
+
+```
+Scrapers (ted/kommers/eavrop)
+    → list[TenderRecord]  (Pydantic, models.py)
+    → db.upsert_procurement()  (SQLite, UNIQUE(source, source_id))
+    → scorer.score_procurement()  (2-stegs gate + viktade nyckelord → 0-100)
+    → analyzer.ollama_prefilter_all()  (snabb AI-relevanscheck)
+    → analyzer.analyze_all_relevant()  (djupanalys med function calling)
+    → db.ensure_pipeline_entry()  (score>0 + ai_relevance=relevant → pipeline)
+    → db.auto_link_procurements_to_accounts()  (buyer-alias-matchning)
+```
+
+## Nyckelarkitektur
+
+**Auth** (`auth.py`): Admin-användare injiceras i streamlit-authenticator config vid runtime med plaintext-lösenord (`auto_hash=True` hashar). Authenticator cachas i `session_state["_authenticator"]`. Roller: `admin`, `kam`, `saljchef`.
+
+**Sidor** (`pages/*.py`): Varje sida exporterar en `render_X()` funktion utan parametrar — hämtar `current_user` från `st.session_state`. Admin-sidan visas villkorligt i `app.py` baserat på roll.
+
+**Scrapers** (`scrapers/*.py`): Alla ärver `BaseScraper(ABC)` med `fetch() → list[TenderRecord]`. Registrerade i `ALL_SCRAPERS` i `__init__.py`. Använder `with_backoff()` för exponentiell retry vid 429/5xx.
+
+**Scoring** (`scorer.py`): Returnerar 3-tupel `(score, rationale, breakdown)`. Steg 1: sector gate (blockerar irrelevanta sektorer, kräver utbildningssignal). Steg 2: viktad nyckelordspoäng + buyer-bonus + CPV-bonus, max 100.
+
+**AI-analys** (`analyzer.py`): Tvåfas — prefilter (snabb relevans) + djupanalys (function calling → kravsammanfattning, matchningsanalys, prisstrategi, anbudshjälp). ENDA modell: Ministral 3 14B via llama-server (`LLM_BASE_URL` i `.env`). Använd ALDRIG andra modeller.
+
+**Databas** (`db.py`): ALL databasåtkomst går genom denna fil — aldrig rå SQL i andra filer. `upsert_procurement()` accepterar både `dict` och `TenderRecord`. WAL-mode, 15 tabeller, 14 index.
 
 ## Kodkonventioner
+
 - Svensk UI-text, engelska kodidentifierare
 - Typhintar på funktionssignaturer
-- Alla scrapers ärver `scrapers/base.py:BaseScraper`
-- Databasåtkomst går genom `db.py` (aldrig rå SQL i andra filer)
-- Scoringlogik finns i `scorer.py`
-- AI-analys i `analyzer.py`
-- Auth i `auth.py` — `check_auth()`, `get_current_user()`, `require_role()`
-- Alla sidor i `pages/` tar `current_user: dict` som argument
-- Roller: `kam` (KAM) och `saljchef` (säljchef med utökade rättigheter)
-- Pipeline-steg: bevakad, kvalificerad, anbud_pagaende, inskickad, vunnen, forlorad
-- Frontendtema: svart/orange/grått SaaS-stil, inga emojis, inga AI-ikoner
+- `on_progress: Callable[[str], None]` callback-mönster för att streama status till Streamlit UI
+- Pipeline-steg: `bevakad`, `kvalificerad`, `anbud_pagaende`, `inskickad`, `vunnen`, `forlorad`
+- Frontend: svart/orange/grått SaaS-tema, inga emojis, inga AI-ikoner
+- Tester använder `tmp_db` fixture (monkeypatch `DB_PATH` → isolerad temp-databas per test)
+
+## Inloggning
+
+- Admin: `admin` / `admin` (hårdkodad i auth.py)
+- KAM: `anna_lindberg`, `erik_svensson`, `maria_johansson` (lösenord: `changeme123`)
+- Säljchef: `peter_nilsson` (lösenord: `changeme123`)
 
 ## Git
+
 - Remote: https://github.com/DanielWarg/Upphandling
 - Branch: main
-- .gitignore exkluderar __pycache__, *.db, .env, venv, config/users.yaml
+- `.gitignore` exkluderar: `__pycache__`, `*.db`, `.env`, `venv/`, `config/users.yaml`
