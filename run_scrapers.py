@@ -10,6 +10,7 @@ from db import (
     auto_link_procurements_to_accounts, get_all_active_watches, create_notification,
     has_notification, archive_expired_procurements, cross_source_deduplicate,
     create_deadline_calendar_events, expire_pipeline_entries, deduplicate_notifications,
+    get_procurements_missing_data, update_procurement_fields,
 )
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
@@ -216,6 +217,65 @@ def check_watch_lists(on_progress: Callable[[str], None] | None = None) -> int:
     else:
         print(msg)
     return notified
+
+
+def backfill_missing_data(source: str | None = None, on_progress: Callable[[str], None] | None = None) -> int:
+    """Re-fetch detail pages for procurements missing buyer/description/geography."""
+    import httpx
+    from scrapers.kommers import KommersScraper
+    from scrapers.eavrop import EAvropScraper
+
+    missing = get_procurements_missing_data(source)
+    if not missing:
+        msg = "Inga upphandlingar saknar data"
+        if on_progress:
+            on_progress(msg)
+        else:
+            print(msg)
+        return 0
+
+    msg = f"Backfill: {len(missing)} upphandlingar saknar data"
+    if on_progress:
+        on_progress(msg)
+    else:
+        print(msg)
+
+    updated = 0
+    with httpx.Client(timeout=15, follow_redirects=True) as client:
+        for i, proc in enumerate(missing):
+            url = proc.get("url", "")
+            src = proc["source"]
+            fields: dict = {}
+
+            try:
+                if src == "kommers" and not proc.get("buyer"):
+                    buyer = KommersScraper._fetch_buyer(client, url)
+                    if buyer:
+                        fields["buyer"] = buyer
+
+                elif src == "eavrop" and (not proc.get("description") or not proc.get("geography")):
+                    desc, geo = EAvropScraper._fetch_detail(client, url)
+                    if desc and not proc.get("description"):
+                        fields["description"] = desc
+                    if geo and not proc.get("geography"):
+                        fields["geography"] = geo
+
+                if fields:
+                    update_procurement_fields(proc["id"], **fields)
+                    updated += 1
+
+            except Exception:
+                continue
+
+            if on_progress and (i + 1) % 20 == 0:
+                on_progress(f"Backfill: {i + 1}/{len(missing)} ({updated} uppdaterade)")
+
+    msg = f"Backfill klar: {updated}/{len(missing)} uppdaterade"
+    if on_progress:
+        on_progress(msg)
+    else:
+        print(msg)
+    return updated
 
 
 def run(sources: list[str] | None = None, skip_scoring: bool = False,

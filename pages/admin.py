@@ -212,6 +212,36 @@ def _render_cleanup_section():
             count = cross_source_deduplicate()
             st.success(f"Borttagna cross-source dubbletter: {count}")
 
+    col4, col5, col6 = st.columns(3)
+
+    with col4:
+        st.markdown("**Rensa gamla kalenderevents**")
+        st.caption("Tar bort kalenderhandelser med passerat datum")
+        if st.button("Rensa gamla events", use_container_width=True):
+            from db import cleanup_old_calendar_events
+            count = cleanup_old_calendar_events()
+            st.success(f"Borttagna: {count} gamla kalenderhandelser")
+
+    with col5:
+        st.markdown("**Backfill saknad data**")
+        st.caption("Hamtar buyer/beskrivning fran detaljsidor for befintliga poster")
+        if st.button("Kor backfill", use_container_width=True):
+            from run_scrapers import backfill_missing_data
+            with st.status("Kor backfill...", expanded=True) as status:
+                def on_progress(msg: str):
+                    st.write(msg)
+                count = backfill_missing_data(on_progress=on_progress)
+                status.update(label=f"Backfill klar: {count} uppdaterade", state="complete")
+
+    with col6:
+        st.markdown("**VACUUM databas**")
+        st.caption("Defragmenterar och optimerar databasfilen")
+        if st.button("Kor VACUUM", use_container_width=True):
+            conn = get_connection()
+            conn.execute("VACUUM")
+            conn.close()
+            st.success("VACUUM klar — databasen ar optimerad")
+
 
 # ---------------------------------------------------------------------------
 # Section 4 — Users & Watches

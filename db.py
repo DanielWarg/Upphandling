@@ -1331,6 +1331,16 @@ def delete_calendar_event(event_id: int):
     conn.close()
 
 
+def cleanup_old_calendar_events() -> int:
+    """Delete calendar events with passed dates. Returns count deleted."""
+    conn = get_connection()
+    cur = conn.execute("DELETE FROM calendar_events WHERE event_date < date('now')")
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
 # =====================================================================
 # Notifications CRUD
 # =====================================================================
@@ -1563,6 +1573,7 @@ def create_deadline_calendar_events() -> int:
 # =====================================================================
 
 SEED_ACCOUNTS = [
+    # Kollektivtrafik
     ("Västtrafik", "västtrafik,vasttrafik", "Västra Götaland"),
     ("Skånetrafiken", "skånetrafiken,skanetrafiken", "Skåne"),
     ("Region Uppsala / UL", "uppsalatrafik,ul,region uppsala", "Uppsala"),
@@ -1579,6 +1590,26 @@ SEED_ACCOUNTS = [
     ("Norrbottens Länstrafik", "norrbottens länstrafik,länstrafiken i norrbotten", "Norrbotten"),
     ("Samtrafiken", "samtrafiken", "Nationell"),
     ("Svealandstrafiken", "svealandstrafiken", "Södermanland/Örebro"),
+    # Regioner — vanliga upphandlare av ledarskap/utbildning
+    ("Region Värmland", "region värmland", "Värmland"),
+    ("Region Halland", "region halland", "Halland"),
+    ("Region Gotland", "region gotland", "Gotland"),
+    ("Region Skåne", "region skåne", "Skåne"),
+    ("Region Stockholm", "region stockholm,stockholms läns landsting", "Stockholm"),
+    ("Region Västra Götaland", "region västra götaland,västra götalandsregionen,vgr", "Västra Götaland"),
+    ("Region Östergötland", "region östergötland", "Östergötland"),
+    ("Region Jönköpings län", "region jönköpings län,region jönköping", "Jönköping"),
+    ("Region Norrbotten", "region norrbotten", "Norrbotten"),
+    # Kommuner — frekventa upphandlare
+    ("Huddinge kommun", "huddinge kommun", "Stockholm"),
+    ("Umeå kommun", "umeå kommun", "Västerbotten"),
+    ("Nacka kommun", "nacka kommun", "Stockholm"),
+    ("Stockholms stad", "stockholms stad,stockholm stad", "Stockholm"),
+    ("Göteborgs stad", "göteborgs stad,göteborg stad", "Västra Götaland"),
+    ("Malmö stad", "malmö stad", "Skåne"),
+    # Myndigheter
+    ("Specialpedagogiska Skolmyndigheten", "specialpedagogiska skolmyndigheten,spsm", "Nationell"),
+    ("Stockholms läns sjukvårdsområde", "stockholms läns sjukvårdsområde,slso", "Stockholm"),
 ]
 
 
@@ -1641,3 +1672,38 @@ def get_recent_activity(limit: int = 20, username: str | None = None) -> list[di
     # Sort by timestamp descending
     activities.sort(key=lambda a: a.get("timestamp") or "", reverse=True)
     return activities[:limit]
+
+
+def get_procurements_missing_data(source: str | None = None) -> list[dict]:
+    """Get procurements missing buyer, description, or geography for backfill."""
+    conn = get_connection()
+    sql = """
+        SELECT id, source, url, title, buyer, description, geography FROM procurements
+        WHERE (buyer IS NULL OR buyer = '' OR description IS NULL OR description = '' OR geography IS NULL OR geography = '')
+          AND url IS NOT NULL AND url != ''
+          AND status != 'expired'
+    """
+    params: list = []
+    if source:
+        sql += " AND source = ?"
+        params.append(source)
+    sql += " ORDER BY score DESC, id"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_procurement_fields(procurement_id: int, **kwargs):
+    """Update specific fields on a procurement (for backfill)."""
+    allowed = {"buyer", "description", "geography", "estimated_value", "deadline"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed and v}
+    if not updates:
+        return
+    conn = get_connection()
+    fields = [f"{k} = ?" for k in updates]
+    fields.append("updated_at = datetime('now')")
+    params = list(updates.values())
+    params.append(procurement_id)
+    conn.execute(f"UPDATE procurements SET {', '.join(fields)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
