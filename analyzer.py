@@ -336,13 +336,18 @@ def analyze_procurement(procurement_id: int, force: bool = False, model: str = "
     return get_analysis(procurement_id)
 
 
-def analyze_all_relevant(min_score: int = 1, force: bool = False, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf") -> int:
+def analyze_all_relevant(min_score: int = 1, force: bool = False,
+                         model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf",
+                         batch_size: int = 10, batch_pause: float = 5.0) -> int:
     """Run Ollama deep analysis on all relevant procurements.
 
     Processes procurements with score >= min_score and ai_relevance == "relevant".
     Skips those that already have a cached analysis unless force=True.
+    Pauses batch_pause seconds every batch_size analyses to let the model cool down.
     Returns number of procurements analyzed.
     """
+    import time
+
     procs = get_all_procurements()
     analyzed = 0
 
@@ -365,6 +370,11 @@ def analyze_all_relevant(min_score: int = 1, force: bool = False, model: str = "
         except Exception as e:
             logger.error("Deep analysis failed for procurement %d: %s", p["id"], e)
             print(f"  Fel: {e}")
+
+        # Batch pause to let the model cool down
+        if analyzed > 0 and analyzed % batch_size == 0:
+            print(f"  Paus {batch_pause}s efter {analyzed} analyser...")
+            time.sleep(batch_pause)
 
     logger.info("Deep analysis: %d procurements analyzed", analyzed)
     print(f"Ollama-djupanalys: {analyzed} upphandlingar analyserade")
@@ -557,27 +567,28 @@ def ollama_prefilter_procurement(proc_id: int, model: str = "Ministral-3-14B-Ins
     return parsed
 
 
-def ollama_prefilter_all(model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", force: bool = False, min_score: int = 1) -> int:
+def ollama_prefilter_all(model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", force: bool = False,
+                         min_score: int = 1, batch_size: int = 10, batch_pause: float = 3.0) -> int:
     """Run AI prefilter on procurements using local Ollama.
 
     Only processes procurements with score >= min_score (default 1, i.e. those
-    that passed the sector gate). No sleep between calls (local model).
+    that passed the sector gate). Pauses batch_pause seconds every batch_size calls.
     Skips already-assessed procurements unless force=True.
     Returns number of procurements filtered as irrelevant.
     """
+    import time
+
     procs = get_all_procurements()
     filtered = 0
     checked = 0
     skipped_low = 0
 
     for p in procs:
-        # Skip procurements that didn't pass sector gate
         score = p.get("score") or 0
         if score < min_score:
             skipped_low += 1
             continue
 
-        # Skip already assessed unless force
         if not force and p.get("ai_relevance") is not None:
             continue
 
@@ -586,6 +597,11 @@ def ollama_prefilter_all(model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf
             checked += 1
             if not result["relevant"]:
                 filtered += 1
+
+        # Batch pause to let the model cool down
+        if checked > 0 and checked % batch_size == 0:
+            print(f"  Paus {batch_pause}s efter {checked} prefilter-anrop...")
+            time.sleep(batch_pause)
 
     logger.info("Ollama prefilter: checked %d, filtered %d as irrelevant, skipped %d (low score)", checked, filtered, skipped_low)
     print(f"Ollama-prefilter: {checked} bedömda, {filtered} filtrerade som irrelevanta, {skipped_low} hoppade över (score < {min_score})")
