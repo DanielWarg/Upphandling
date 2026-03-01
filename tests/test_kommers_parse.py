@@ -63,7 +63,7 @@ class TestKommersNoClientFilter:
 
 
 class TestKommersBuyerParse:
-    """Test _fetch_buyer parsing from detail HTML fixture."""
+    """Test _fetch_buyer parsing from detail HTML fixture (old layout)."""
 
     def setup_method(self):
         from bs4 import BeautifulSoup
@@ -94,3 +94,43 @@ class TestKommersBuyerParse:
         link = self.soup.select_one("a[href*='Organization']")
         assert link is not None
         assert "Region Stockholm" in link.get_text(strip=True)
+
+
+class TestKommersBuyerParseV2:
+    """Test _fetch_buyer with current Kommers layout (span.label + span.value)."""
+
+    def setup_method(self):
+        from bs4 import BeautifulSoup
+        with open(FIXTURES_DIR / "kommers_detail_v2.html") as f:
+            self.soup = BeautifulSoup(f.read(), "html.parser")
+
+    def test_officiellt_namn_label_exists(self):
+        import re
+        label = self.soup.find("span", class_="label", string=re.compile("Officiellt namn"))
+        assert label is not None
+
+    def test_buyer_value_extracted(self):
+        import re
+        label = self.soup.find("span", class_="label", string=re.compile("Officiellt namn"))
+        parent_div = label.find_parent("div")
+        value = parent_div.find("span", class_="value")
+        assert value is not None
+        assert value.get_text(strip=True) == "Lunds universitet"
+
+    def test_fetch_buyer_returns_name(self):
+        """End-to-end: _fetch_buyer should find buyer from v2 layout via httpx mock."""
+        from unittest.mock import MagicMock, patch
+        import httpx
+
+        with open(FIXTURES_DIR / "kommers_detail_v2.html") as f:
+            html = f.read()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        mock_client = MagicMock(spec=httpx.Client)
+        mock_client.get.return_value = mock_resp
+
+        buyer = KommersScraper._fetch_buyer(mock_client, "https://www.kommersannons.se/Notices/TenderNotice/20188")
+        assert buyer == "Lunds universitet"

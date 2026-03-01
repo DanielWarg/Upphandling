@@ -274,7 +274,7 @@ def backfill_missing_data(source: str | None = None, on_progress: Callable[[str]
             src = proc["source"]
             fields: dict = {}
 
-            if not url:
+            if not url or url.startswith("javascript:"):
                 counters["skipped"] += 1
                 continue
 

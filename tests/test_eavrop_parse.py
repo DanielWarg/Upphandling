@@ -77,3 +77,40 @@ class TestEAvropDetailParse:
         desc = EAvropScraper._extract_description(self.soup)
         assert desc is not None
         assert len(desc) <= 2000
+
+
+class TestEAvropAuthWall:
+    """Test auth wall detection for e-Avrop detail pages."""
+
+    def setup_method(self):
+        from bs4 import BeautifulSoup
+        with open(FIXTURES_DIR / "eavrop_auth_wall.html") as f:
+            self.soup = BeautifulSoup(f.read(), "html.parser")
+
+    def test_auth_wall_detected(self):
+        assert EAvropScraper._is_auth_wall(self.soup) is True
+
+    def test_normal_page_not_auth_wall(self):
+        from bs4 import BeautifulSoup
+        with open(FIXTURES_DIR / "eavrop_detail.html") as f:
+            normal_soup = BeautifulSoup(f.read(), "html.parser")
+        assert EAvropScraper._is_auth_wall(normal_soup) is False
+
+    def test_fetch_detail_skips_auth_wall(self):
+        """_fetch_detail should return (None, None) for auth wall pages."""
+        from unittest.mock import MagicMock, patch
+        import httpx
+
+        with open(FIXTURES_DIR / "eavrop_auth_wall.html") as f:
+            html = f.read()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        mock_client = MagicMock(spec=httpx.Client)
+        mock_client.get.return_value = mock_resp
+
+        desc, geo = EAvropScraper._fetch_detail(mock_client, "https://www.e-avrop.com/org/visa/upphandling.aspx?id=99999")
+        assert desc is None
+        assert geo is None

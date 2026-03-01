@@ -160,6 +160,11 @@ class EAvropScraper(BaseScraper):
             logger.debug("e-Avrop detail HTTP %d for %s", resp.status_code, detail_url)
             soup = BeautifulSoup(resp.text, "html.parser")
 
+            # Detect auth wall — detail pages often redirect to login
+            if EAvropScraper._is_auth_wall(soup):
+                logger.debug("e-Avrop auth wall detected for %s, skipping", detail_url)
+                return None, None
+
             description = EAvropScraper._extract_description(soup)
             geography = EAvropScraper._extract_geography(soup)
 
@@ -268,6 +273,15 @@ class EAvropScraper(BaseScraper):
 
         logger.debug("e-Avrop geo: no geography found")
         return None
+
+    @staticmethod
+    def _is_auth_wall(soup: BeautifulSoup) -> bool:
+        """Detect if a page is an authentication/login wall."""
+        page_text = soup.get_text()
+        auth_markers = ["Logga in", "Lösenord", "Användarnamn"]
+        matches = sum(1 for m in auth_markers if m in page_text)
+        # Require at least 2 markers to avoid false positives
+        return matches >= 2
 
     @staticmethod
     def _extract_date(text: str | None) -> str | None:
