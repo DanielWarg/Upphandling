@@ -81,7 +81,7 @@ def _run_full_pipeline(sources: list[str]):
         run_deep_analysis, create_pipeline_entries, link_accounts,
         check_watch_lists,
     )
-    from db import archive_expired_procurements, cross_source_deduplicate, create_deadline_calendar_events
+    from db import archive_expired_procurements, cross_source_deduplicate, create_deadline_calendar_events, expire_pipeline_entries, deduplicate_notifications
 
     with st.status("Kor hela pipelinen...", expanded=True) as status:
         def on_progress(msg: str):
@@ -116,16 +116,24 @@ def _run_full_pipeline(sources: list[str]):
         except Exception as e:
             on_progress(f"Djupanalys kunde inte koras: {e}")
 
-        on_progress("Steg 8/10: Pipeline-poster & kontolänkning...")
+        on_progress("Steg 8/12: Pipeline-poster & kontolänkning...")
         create_pipeline_entries(on_progress=on_progress)
         link_accounts(on_progress=on_progress)
 
-        on_progress("Steg 9/10: Bevakningslistor...")
+        on_progress("Steg 9/12: Rensa expired ur pipeline...")
+        expired_pl = expire_pipeline_entries()
+        on_progress(f"Pipeline: {expired_pl} expired markerade som forlorad")
+
+        on_progress("Steg 10/12: Bevakningslistor...")
         check_watch_lists(on_progress=on_progress)
 
-        on_progress("Steg 10/10: Kalenderhandelser...")
+        on_progress("Steg 11/12: Kalenderhandelser...")
         cal_count = create_deadline_calendar_events()
         on_progress(f"Kalenderhandelser skapade: {cal_count}")
+
+        on_progress("Steg 12/12: Rensa dubblettnotiser...")
+        deduped = deduplicate_notifications()
+        on_progress(f"Dubblettnotiser borttagna: {deduped}")
 
         status.update(label="Hela pipelinen klar", state="complete")
 

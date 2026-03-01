@@ -253,10 +253,18 @@ def init_db():
     # Create indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_buyer ON procurements(buyer)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_account ON procurements(account_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_source ON procurements(source)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_status ON procurements(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_deadline ON procurements(deadline)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_score ON procurements(score)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_assigned ON pipeline(assigned_to)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON pipeline(stage)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_username)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_procurement ON notifications(procurement_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_user)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_watch_list_user ON watch_list(user_username)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_procurement ON calendar_events(procurement_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(event_date)")
 
     # Seed schema version
     conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
@@ -288,7 +296,7 @@ def purge_old_expired(days: int = 180) -> int:
     Returns number of deleted procurements.
     """
     conn = get_connection()
-    cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
     # Find old expired IDs
     rows = conn.execute("""
@@ -1378,6 +1386,49 @@ def mark_all_notifications_read(username: str):
     conn.execute("UPDATE notifications SET read_at = ? WHERE user_username = ? AND read_at IS NULL", (now, username))
     conn.commit()
     conn.close()
+
+
+def deduplicate_notifications() -> int:
+    """Remove duplicate notifications (same user + procurement + title). Returns removed count."""
+    conn = get_connection()
+    cur = conn.execute("""
+        DELETE FROM notifications WHERE id NOT IN (
+            SELECT MIN(id) FROM notifications
+            GROUP BY user_username, procurement_id, title
+        )
+    """)
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+def has_notification(username: str, procurement_id: int, notification_type: str) -> bool:
+    """Check if a notification already exists for this user+procurement+type."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT 1 FROM notifications WHERE user_username = ? AND procurement_id = ? AND notification_type = ? LIMIT 1",
+        (username, procurement_id, notification_type),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def expire_pipeline_entries() -> int:
+    """Move expired procurements in pipeline to 'forlorad' stage. Returns count updated."""
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    cur = conn.execute("""
+        UPDATE pipeline SET stage = 'forlorad', probability = 0, updated_by = 'system', updated_at = ?
+        WHERE procurement_id IN (
+            SELECT id FROM procurements WHERE status = 'expired'
+        )
+        AND stage NOT IN ('vunnen', 'forlorad')
+    """, (now,))
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
 
 
 # =====================================================================

@@ -8,7 +8,8 @@ from db import (
     init_db, upsert_procurement, get_all_procurements, update_score,
     deduplicate_procurements, ensure_pipeline_entry, seed_accounts,
     auto_link_procurements_to_accounts, get_all_active_watches, create_notification,
-    archive_expired_procurements, cross_source_deduplicate, create_deadline_calendar_events,
+    has_notification, archive_expired_procurements, cross_source_deduplicate,
+    create_deadline_calendar_events, expire_pipeline_entries, deduplicate_notifications,
 )
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
@@ -197,6 +198,9 @@ def check_watch_lists(on_progress: Callable[[str], None] | None = None) -> int:
                     matched = True
 
             if matched:
+                # Skip if notification already exists for this user+procurement
+                if has_notification(watch["user_username"], proc["id"], "watch_match"):
+                    continue
                 create_notification(
                     username=watch["user_username"],
                     notification_type="watch_match",
@@ -259,7 +263,25 @@ def run(sources: list[str] | None = None, skip_scoring: bool = False,
 
     create_pipeline_entries(on_progress=on_progress)
     link_accounts(on_progress=on_progress)
+
+    # Expire pipeline entries for expired procurements
+    expired_pipeline = expire_pipeline_entries()
+    msg = f"Pipeline: {expired_pipeline} expired-poster markerade som forlorad"
+    if on_progress:
+        on_progress(msg)
+    else:
+        print(msg)
+
     check_watch_lists(on_progress=on_progress)
+
+    # Deduplicate notifications
+    deduped = deduplicate_notifications()
+    if deduped > 0:
+        msg = f"Rensade {deduped} dubblettnotiser"
+        if on_progress:
+            on_progress(msg)
+        else:
+            print(msg)
 
     # Create deadline calendar events
     msg = "Skapar kalenderhandelser for deadlines..."
