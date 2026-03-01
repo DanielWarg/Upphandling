@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import bcrypt
 import streamlit as st
 import yaml
 import streamlit_authenticator as stauth
@@ -13,17 +12,16 @@ CONFIG_PATH = Path(__file__).parent / "config" / "users.yaml"
 # Admin credentials — injected into authenticator config at runtime
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin"
-_ADMIN_HASH = bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode()
 
 
 def _load_config() -> dict:
     with open(CONFIG_PATH) as f:
         config = yaml.safe_load(f)
 
-    # Inject admin user into credentials so authenticator handles it natively
+    # Inject admin user with plaintext password — auto_hash=True handles hashing
     config["credentials"]["usernames"][ADMIN_USERNAME] = {
         "name": "Administratör",
-        "password": _ADMIN_HASH,
+        "password": ADMIN_PASSWORD,
         "email": "",
         "role": "admin",
     }
