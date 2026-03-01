@@ -151,44 +151,123 @@ class EAvropScraper(BaseScraper):
         Returns (description, geography).
         """
         try:
+            logger.debug("Fetching e-Avrop detail: %s", detail_url)
             def _get():
                 r = client.get(detail_url, timeout=15)
                 r.raise_for_status()
                 return r
             resp = with_backoff(_get)
+            logger.debug("e-Avrop detail HTTP %d for %s", resp.status_code, detail_url)
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Extract description
-            description = None
-            for label_text in ["Beskrivning", "Beskrivning av upphandlingen", "Varugrupp"]:
-                label = soup.find(string=re.compile(label_text, re.IGNORECASE))
-                if label:
-                    parent = label.find_parent(["dt", "th", "label", "strong", "b", "div", "td"])
-                    if parent:
-                        sibling = parent.find_next_sibling(["dd", "td", "span", "div", "p"])
-                        if sibling:
-                            text = sibling.get_text(strip=True)
-                            if text and len(text) > 10:
-                                description = text[:2000]
-                                break
+            description = EAvropScraper._extract_description(soup)
+            geography = EAvropScraper._extract_geography(soup)
 
-            # Extract geography
-            geography = None
-            for label_text in ["Leveransort", "Ort", "Kommun", "Region", "NUTS"]:
-                label = soup.find(string=re.compile(label_text, re.IGNORECASE))
-                if label:
-                    parent = label.find_parent(["dt", "th", "label", "strong", "b", "div", "td"])
-                    if parent:
-                        sibling = parent.find_next_sibling(["dd", "td", "span", "div"])
-                        if sibling:
-                            text = sibling.get_text(strip=True)
-                            if text and len(text) > 1:
-                                geography = text
-                                break
-
+            logger.debug("e-Avrop detail result: desc=%s chars, geo=%s",
+                         len(description) if description else 0, geography)
             return description, geography
-        except Exception:
+        except Exception as e:
+            logger.warning("e-Avrop detail fetch failed for %s: %s", detail_url, e)
             return None, None
+
+    @staticmethod
+    def _extract_description(soup: BeautifulSoup) -> str | None:
+        """Extract description from e-Avrop detail page with multiple strategies."""
+        # Strategy 1: Label-based search
+        for label_text in ["Beskrivning", "Beskrivning av upphandlingen", "Varugrupp",
+                           "Kort beskrivning", "Förfrågningsunderlag"]:
+            label = soup.find(string=re.compile(label_text, re.IGNORECASE))
+            if label:
+                parent = label.find_parent(["dt", "th", "label", "strong", "b", "div", "td"])
+                if parent:
+                    sibling = parent.find_next_sibling(["dd", "td", "span", "div", "p"])
+                    if sibling:
+                        text = sibling.get_text(strip=True)
+                        if text and len(text) > 10:
+                            logger.debug("e-Avrop desc found via label '%s'", label_text)
+                            return text[:2000]
+
+        # Strategy 2: ASP.NET WebForms panel IDs
+        for panel_id in ["mainContent_descriptionPanel", "mainContent_detailPanel",
+                         "ctl00_mainContent_descriptionLabel", "ctl00_mainContent_descriptionPanel"]:
+            panel = soup.find(id=re.compile(panel_id, re.IGNORECASE))
+            if panel:
+                text = panel.get_text(strip=True)
+                if text and len(text) > 10:
+                    logger.debug("e-Avrop desc found via panel ID '%s'", panel_id)
+                    return text[:2000]
+
+        # Strategy 3: Class-based selectors
+        for css_class in ["description", "tender-description", "procurement-description",
+                          "content-area", "detail-content"]:
+            el = soup.find(class_=re.compile(css_class, re.IGNORECASE))
+            if el:
+                text = el.get_text(strip=True)
+                if text and len(text) > 10:
+                    logger.debug("e-Avrop desc found via class '%s'", css_class)
+                    return text[:2000]
+
+        # Strategy 4: Fallback — largest text block on the page (>50 chars)
+        candidates = []
+        for tag in soup.find_all(["p", "div", "td", "span"]):
+            text = tag.get_text(strip=True)
+            if text and len(text) > 50 and not tag.find(["table", "form", "nav"]):
+                candidates.append(text)
+        if candidates:
+            best = max(candidates, key=len)
+            logger.debug("e-Avrop desc found via largest text block (%d chars)", len(best))
+            return best[:2000]
+
+        logger.debug("e-Avrop desc: no description found")
+        return None
+
+    @staticmethod
+    def _extract_geography(soup: BeautifulSoup) -> str | None:
+        """Extract geography from e-Avrop detail page with multiple strategies."""
+        # Strategy 1: Label-based search
+        for label_text in ["Leveransort", "Ort", "Kommun", "Region", "NUTS", "Plats"]:
+            label = soup.find(string=re.compile(label_text, re.IGNORECASE))
+            if label:
+                parent = label.find_parent(["dt", "th", "label", "strong", "b", "div", "td"])
+                if parent:
+                    sibling = parent.find_next_sibling(["dd", "td", "span", "div"])
+                    if sibling:
+                        text = sibling.get_text(strip=True)
+                        if text and len(text) > 1:
+                            logger.debug("e-Avrop geo found via label '%s': %s", label_text, text)
+                            return text
+
+        # Strategy 2: ASP.NET panel IDs
+        for panel_id in ["mainContent_locationLabel", "mainContent_nutsLabel",
+                         "ctl00_mainContent_locationLabel"]:
+            panel = soup.find(id=re.compile(panel_id, re.IGNORECASE))
+            if panel:
+                text = panel.get_text(strip=True)
+                if text and len(text) > 1:
+                    logger.debug("e-Avrop geo found via panel ID '%s': %s", panel_id, text)
+                    return text
+
+        # Strategy 3: NUTS code regex in full page text
+        page_text = soup.get_text()
+        nuts_match = re.search(r"SE\d{2,3}", page_text)
+        if nuts_match:
+            logger.debug("e-Avrop geo found via NUTS regex: %s", nuts_match.group(0))
+            return nuts_match.group(0)
+
+        # Strategy 4: Swedish region/municipality names
+        _REGIONS = [
+            "Stockholm", "Västra Götaland", "Skåne", "Östergötland", "Uppsala",
+            "Jönköping", "Halland", "Örebro", "Södermanland", "Dalarna",
+            "Gävleborg", "Värmland", "Norrbotten", "Västerbotten", "Kronoberg",
+            "Kalmar", "Blekinge", "Västernorrland", "Jämtland", "Gotland",
+        ]
+        for region in _REGIONS:
+            if region.lower() in page_text.lower():
+                logger.debug("e-Avrop geo found via region name: %s", region)
+                return region
+
+        logger.debug("e-Avrop geo: no geography found")
+        return None
 
     @staticmethod
     def _extract_date(text: str | None) -> str | None:

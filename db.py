@@ -1009,27 +1009,77 @@ def get_procurements_for_account(account_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _normalize_buyer_text(text: str) -> str:
+    """Normalize buyer text for fuzzy matching.
+
+    Lowercases, strips Swedish chars (a/a/o), removes common suffixes (AB, HB),
+    and trims whitespace.
+    """
+    t = text.lower().strip()
+    # Swedish char normalization
+    t = t.replace("å", "a").replace("ä", "a").replace("ö", "o")
+    # Remove common business suffixes
+    for suffix in (" ab", " hb", " kb", " ek. for.", " ek for"):
+        if t.endswith(suffix):
+            t = t[: -len(suffix)]
+    return t.strip()
+
+
 def auto_link_procurements_to_accounts():
-    """Auto-link procurements to accounts based on buyer_aliases."""
+    """Auto-link procurements to accounts based on buyer_aliases.
+
+    Uses normalized text matching + fuzzy fallback (SequenceMatcher > 0.85).
+    """
+    from difflib import SequenceMatcher
+
     conn = get_connection()
     accounts = conn.execute("SELECT id, buyer_aliases, normalized_name FROM accounts").fetchall()
     unlinked = conn.execute("SELECT id, buyer FROM procurements WHERE account_id IS NULL AND buyer IS NOT NULL").fetchall()
 
     linked_count = 0
     for proc in unlinked:
-        buyer_lower = (proc["buyer"] or "").lower()
+        buyer_raw = proc["buyer"] or ""
+        buyer_norm = _normalize_buyer_text(buyer_raw)
+        buyer_lower = buyer_raw.lower()
+        matched = False
+
         for acc in accounts:
             aliases = (acc["buyer_aliases"] or "").lower().split(",")
             aliases.append(acc["normalized_name"])
+
             for alias in aliases:
                 alias = alias.strip()
-                if alias and alias in buyer_lower:
+                if not alias:
+                    continue
+                alias_norm = _normalize_buyer_text(alias)
+
+                # Exact substring match (original behavior)
+                if alias in buyer_lower or alias_norm in buyer_norm:
                     conn.execute("UPDATE procurements SET account_id = ? WHERE id = ?", (acc["id"], proc["id"]))
                     linked_count += 1
+                    matched = True
                     break
-            else:
-                continue
-            break
+            if matched:
+                break
+
+        # Fuzzy fallback if no exact match
+        if not matched and buyer_norm:
+            best_ratio = 0.0
+            best_acc_id = None
+            for acc in accounts:
+                aliases = (acc["buyer_aliases"] or "").lower().split(",")
+                aliases.append(acc["normalized_name"])
+                for alias in aliases:
+                    alias = alias.strip()
+                    if not alias:
+                        continue
+                    ratio = SequenceMatcher(None, buyer_norm, _normalize_buyer_text(alias)).ratio()
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_acc_id = acc["id"]
+            if best_ratio > 0.85 and best_acc_id is not None:
+                conn.execute("UPDATE procurements SET account_id = ? WHERE id = ?", (best_acc_id, proc["id"]))
+                linked_count += 1
 
     conn.commit()
     conn.close()
@@ -1574,42 +1624,42 @@ def create_deadline_calendar_events() -> int:
 
 SEED_ACCOUNTS = [
     # Kollektivtrafik
-    ("Västtrafik", "västtrafik,vasttrafik", "Västra Götaland"),
+    ("Västtrafik", "västtrafik,vasttrafik,vasttrafik ab", "Västra Götaland"),
     ("Skånetrafiken", "skånetrafiken,skanetrafiken", "Skåne"),
     ("Region Uppsala / UL", "uppsalatrafik,ul,region uppsala", "Uppsala"),
     ("Hallandstrafiken", "hallandstrafiken", "Halland"),
     ("Östgötatrafiken", "östgötatrafiken,ostgotatrafiken", "Östergötland"),
-    ("SL / Trafiknämnden", "storstockholms lokaltrafik,trafiknämnden,sl", "Stockholm"),
-    ("Jönköpings Länstrafik", "jönköpings länstrafik,jlt", "Jönköping"),
-    ("Länstrafiken Kronoberg", "länstrafiken kronoberg", "Kronoberg"),
-    ("Kalmar Länstrafik", "kalmar länstrafik,klt", "Kalmar"),
+    ("SL / Trafiknämnden", "storstockholms lokaltrafik,trafiknämnden,sl,trafiknamnd", "Stockholm"),
+    ("Jönköpings Länstrafik", "jönköpings länstrafik,jlt,jonkopings lanstrafik", "Jönköping"),
+    ("Länstrafiken Kronoberg", "länstrafiken kronoberg,lanstrafiken kronoberg", "Kronoberg"),
+    ("Kalmar Länstrafik", "kalmar länstrafik,klt,kalmar lanstrafik", "Kalmar"),
     ("Blekingetrafiken", "blekingetrafiken", "Blekinge"),
     ("Dalatrafik", "dalatrafik", "Dalarna"),
     ("X-trafik", "x-trafik", "Gävleborg"),
     ("Din Tur", "din tur", "Västernorrland"),
-    ("Norrbottens Länstrafik", "norrbottens länstrafik,länstrafiken i norrbotten", "Norrbotten"),
+    ("Norrbottens Länstrafik", "norrbottens länstrafik,länstrafiken i norrbotten,norrbottens lanstrafik", "Norrbotten"),
     ("Samtrafiken", "samtrafiken", "Nationell"),
     ("Svealandstrafiken", "svealandstrafiken", "Södermanland/Örebro"),
     # Regioner — vanliga upphandlare av ledarskap/utbildning
-    ("Region Värmland", "region värmland", "Värmland"),
+    ("Region Värmland", "region värmland,region varmland", "Värmland"),
     ("Region Halland", "region halland", "Halland"),
     ("Region Gotland", "region gotland", "Gotland"),
-    ("Region Skåne", "region skåne", "Skåne"),
-    ("Region Stockholm", "region stockholm,stockholms läns landsting", "Stockholm"),
-    ("Region Västra Götaland", "region västra götaland,västra götalandsregionen,vgr", "Västra Götaland"),
-    ("Region Östergötland", "region östergötland", "Östergötland"),
-    ("Region Jönköpings län", "region jönköpings län,region jönköping", "Jönköping"),
+    ("Region Skåne", "region skåne,region skane", "Skåne"),
+    ("Region Stockholm", "region stockholm,stockholms läns landsting,stockholms lans landsting", "Stockholm"),
+    ("Region Västra Götaland", "region västra götaland,västra götalandsregionen,vgr,region vastra gotaland,vastra gotalandsregionen", "Västra Götaland"),
+    ("Region Östergötland", "region östergötland,region ostergotland", "Östergötland"),
+    ("Region Jönköpings län", "region jönköpings län,region jönköping,region jonkopings lan,region jonkoping", "Jönköping"),
     ("Region Norrbotten", "region norrbotten", "Norrbotten"),
     # Kommuner — frekventa upphandlare
-    ("Huddinge kommun", "huddinge kommun", "Stockholm"),
-    ("Umeå kommun", "umeå kommun", "Västerbotten"),
-    ("Nacka kommun", "nacka kommun", "Stockholm"),
-    ("Stockholms stad", "stockholms stad,stockholm stad", "Stockholm"),
-    ("Göteborgs stad", "göteborgs stad,göteborg stad", "Västra Götaland"),
-    ("Malmö stad", "malmö stad", "Skåne"),
+    ("Huddinge kommun", "huddinge kommun,huddinge", "Stockholm"),
+    ("Umeå kommun", "umeå kommun,umea kommun,umea", "Västerbotten"),
+    ("Nacka kommun", "nacka kommun,nacka", "Stockholm"),
+    ("Stockholms stad", "stockholms stad,stockholm stad,stockholm", "Stockholm"),
+    ("Göteborgs stad", "göteborgs stad,göteborg stad,goteborgs stad,goteborg stad,goteborg", "Västra Götaland"),
+    ("Malmö stad", "malmö stad,malmo stad,malmo", "Skåne"),
     # Myndigheter
     ("Specialpedagogiska Skolmyndigheten", "specialpedagogiska skolmyndigheten,spsm", "Nationell"),
-    ("Stockholms läns sjukvårdsområde", "stockholms läns sjukvårdsområde,slso", "Stockholm"),
+    ("Stockholms läns sjukvårdsområde", "stockholms läns sjukvårdsområde,slso,stockholms lans sjukvardsomrade", "Stockholm"),
 ]
 
 

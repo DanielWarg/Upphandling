@@ -51,3 +51,29 @@ class TestEAvropNoClientFilter:
         results = scraper._parse_listing(html)
         # All 3 rows in fixture should be returned (no client filter)
         assert len(results) == 3
+
+
+class TestEAvropDetailParse:
+    """Test _extract_description and _extract_geography from detail HTML."""
+
+    def setup_method(self):
+        from bs4 import BeautifulSoup
+        with open(FIXTURES_DIR / "eavrop_detail.html") as f:
+            self.soup = BeautifulSoup(f.read(), "html.parser")
+
+    def test_extract_description(self):
+        desc = EAvropScraper._extract_description(self.soup)
+        assert desc is not None
+        assert "ledarskapsutbildning" in desc.lower()
+        assert len(desc) > 20
+
+    def test_extract_geography(self):
+        geo = EAvropScraper._extract_geography(self.soup)
+        assert geo is not None
+        # Should find "Goteborg, SE232" via label or NUTS regex
+        assert "SE232" in geo or "Goteborg" in geo
+
+    def test_description_truncated(self):
+        desc = EAvropScraper._extract_description(self.soup)
+        assert desc is not None
+        assert len(desc) <= 2000

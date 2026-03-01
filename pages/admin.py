@@ -72,6 +72,7 @@ def _run_scrape(sources: list[str]):
         dedup_removed = run_dedup(on_progress=on_progress)
 
         total = sum(counts.values())
+        st.cache_data.clear()
         status.update(label=f"Klart — {total} hamtade, {dedup_removed} dubbletter borttagna", state="complete")
 
 
@@ -135,6 +136,7 @@ def _run_full_pipeline(sources: list[str]):
         deduped = deduplicate_notifications()
         on_progress(f"Dubblettnotiser borttagna: {deduped}")
 
+        st.cache_data.clear()
         status.update(label="Hela pipelinen klar", state="complete")
 
 
@@ -144,6 +146,20 @@ def _run_full_pipeline(sources: list[str]):
 
 def _render_analysis_section():
     st.subheader("Scoring & AI-analys")
+
+    # Show unanalyzed count
+    conn = get_connection()
+    unanalyzed = conn.execute(
+        "SELECT COUNT(*) as c FROM procurements WHERE ai_relevance IS NULL AND score > 0"
+    ).fetchone()["c"]
+    total_scored = conn.execute(
+        "SELECT COUNT(*) as c FROM procurements WHERE score > 0"
+    ).fetchone()["c"]
+    conn.close()
+    st.caption(f"Oanalyserade (score > 0, ai_relevance saknas): **{unanalyzed}** av {total_scored}")
+
+    force_rerun = st.checkbox("Tvinga om-analys", value=False,
+                              help="Kor om AI-prefilter/djupanalys aven for redan analyserade")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -162,7 +178,7 @@ def _render_analysis_section():
                 def on_progress(msg: str):
                     st.write(msg)
                 try:
-                    run_ai_prefilter(on_progress=on_progress)
+                    run_ai_prefilter(force=force_rerun, on_progress=on_progress)
                     status.update(label="AI-prefilter klar", state="complete")
                 except Exception as e:
                     status.update(label=f"Fel: {e}", state="error")
@@ -173,7 +189,7 @@ def _render_analysis_section():
             def on_progress(msg: str):
                 st.write(msg)
             try:
-                run_deep_analysis(on_progress=on_progress)
+                run_deep_analysis(force=force_rerun, on_progress=on_progress)
                 status.update(label="Djupanalys klar", state="complete")
             except Exception as e:
                 status.update(label=f"Fel: {e}", state="error")
@@ -224,14 +240,23 @@ def _render_cleanup_section():
 
     with col5:
         st.markdown("**Backfill saknad data**")
-        st.caption("Hamtar buyer/beskrivning fran detaljsidor for befintliga poster")
+        st.caption("Hamtar buyer/beskrivning + omscorar + omlänkar")
         if st.button("Kor backfill", use_container_width=True):
-            from run_scrapers import backfill_missing_data
+            from run_scrapers import backfill_missing_data, score_all, link_accounts
             with st.status("Kor backfill...", expanded=True) as status:
                 def on_progress(msg: str):
                     st.write(msg)
-                count = backfill_missing_data(on_progress=on_progress)
-                status.update(label=f"Backfill klar: {count} uppdaterade", state="complete")
+                counters = backfill_missing_data(on_progress=on_progress)
+                if counters["succeeded"] > 0:
+                    on_progress("Omscorar efter backfill...")
+                    score_all(on_progress=on_progress)
+                    on_progress("Omlänkar konton efter backfill...")
+                    link_accounts(on_progress=on_progress)
+                st.cache_data.clear()
+                status.update(
+                    label=f"Backfill klar: {counters['succeeded']} uppdaterade, {counters['failed']} misslyckade",
+                    state="complete",
+                )
 
     with col6:
         st.markdown("**VACUUM databas**")

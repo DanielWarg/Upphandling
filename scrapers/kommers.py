@@ -180,28 +180,58 @@ class KommersScraper(BaseScraper):
     def _fetch_buyer(client: httpx.Client, detail_url: str) -> str | None:
         """Fetch buyer name from the detail page."""
         try:
+            logger.debug("Fetching Kommers buyer: %s", detail_url)
             def _get():
                 r = client.get(detail_url, timeout=15)
                 r.raise_for_status()
                 return r
             resp = with_backoff(_get)
+            logger.debug("Kommers buyer HTTP %d for %s", resp.status_code, detail_url)
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Look for buyer/organization in detail page
-            # Common patterns: label "Upphandlande myndighet" or "Organisation"
-            for label_text in ["Upphandlande myndighet", "Organisation", "Myndighet"]:
+            # Strategy 1: Label-based search
+            for label_text in ["Upphandlande myndighet", "Organisation", "Myndighet",
+                               "Köpare", "Upphandlande enhet", "Beställare"]:
                 label = soup.find(string=re.compile(label_text, re.IGNORECASE))
                 if label:
                     parent = label.find_parent(["dt", "th", "label", "strong", "b", "div"])
                     if parent:
-                        # Try next sibling dd/td/span
                         sibling = parent.find_next_sibling(["dd", "td", "span", "div"])
                         if sibling:
                             buyer = sibling.get_text(strip=True)
                             if buyer and len(buyer) > 2:
+                                logger.debug("Kommers buyer found via label '%s': %s", label_text, buyer)
                                 return buyer
+
+            # Strategy 2: Meta tags
+            for meta_name in ["author", "publisher", "og:site_name"]:
+                meta = soup.find("meta", attrs={"name": meta_name}) or soup.find("meta", attrs={"property": meta_name})
+                if meta:
+                    content = meta.get("content", "").strip()
+                    if content and len(content) > 2 and content.lower() != "kommersannons":
+                        logger.debug("Kommers buyer found via meta '%s': %s", meta_name, content)
+                        return content
+
+            # Strategy 3: Links to buyer profile
+            for link in soup.select("a[href*='Organization'], a[href*='organisation'], a[href*='Buyer']"):
+                text = link.get_text(strip=True)
+                if text and len(text) > 2:
+                    logger.debug("Kommers buyer found via profile link: %s", text)
+                    return text
+
+            # Strategy 4: Class-based selectors
+            for css_class in ["organization-name", "buyer-name", "authority-name"]:
+                el = soup.find(class_=re.compile(css_class, re.IGNORECASE))
+                if el:
+                    text = el.get_text(strip=True)
+                    if text and len(text) > 2:
+                        logger.debug("Kommers buyer found via class '%s': %s", css_class, text)
+                        return text
+
+            logger.debug("Kommers buyer: not found for %s", detail_url)
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning("Kommers buyer fetch failed for %s: %s", detail_url, e)
             return None
 
     @staticmethod

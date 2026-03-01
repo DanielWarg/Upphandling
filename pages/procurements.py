@@ -16,6 +16,19 @@ from db import (
 
 
 # ---------------------------------------------------------------------------
+# Cached wrappers for expensive queries
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def _cached_get_stats() -> dict:
+    return get_stats()
+
+
+@st.cache_data(ttl=60)
+def _cached_get_all_procurements() -> list[dict]:
+    return get_all_procurements()
+
+
+# ---------------------------------------------------------------------------
 # Helpers (same style as Fas1)
 # ---------------------------------------------------------------------------
 def esc(s: str) -> str:
@@ -328,14 +341,14 @@ def render_procurements():
 # ---------------------------------------------------------------------------
 def _render_kanban():
     """Fas1 kanban: 3 columns by score (Hög / Medel / Låg) with cards."""
-    stats = get_stats()
+    stats = _cached_get_stats()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Totalt", stats["total"])
     c2.metric("Nya idag", stats["new_today"])
     c3.metric("Snitt score", stats["avg_score"])
     c4.metric("Hög fit (60+)", stats["high_fit"])
 
-    all_procs = get_all_procurements()
+    all_procs = _cached_get_all_procurements()
 
     if not all_procs:
         st.markdown(

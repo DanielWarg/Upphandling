@@ -13,6 +13,7 @@ from db import (
     get_calendar_events,
     get_all_contracts,
     get_pipeline_items,
+    get_pipeline_summary,
     get_unread_count,
     get_conversations,
     get_notifications,
@@ -21,6 +22,16 @@ from db import (
     send_message,
 )
 from pages.procurements import show_procurement_dialog
+
+
+@st.cache_data(ttl=60)
+def _cached_get_all_procurements() -> list[dict]:
+    return get_all_procurements()
+
+
+@st.cache_data(ttl=60)
+def _cached_get_pipeline_summary() -> dict:
+    return get_pipeline_summary()
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +242,7 @@ def render_my_page():
     username = current_user["username"]
     is_chef = current_user["role"] == "saljchef"
 
-    all_procs = get_all_procurements()
+    all_procs = _cached_get_all_procurements()
     visible = [
         p for p in all_procs
         if (p.get("score") or 0) > 0 and p.get("ai_relevance") != "irrelevant"

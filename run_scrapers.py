@@ -2,7 +2,30 @@
 """CLI-skript för att köra alla scrapers, lagra resultat och scora leads."""
 
 import argparse
+import logging
 from typing import Callable
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(verbose: bool = False):
+    """Configure logging with console (INFO) + file (DEBUG) output."""
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    # Console handler — INFO by default, DEBUG with --verbose
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    root.addHandler(console)
+
+    # File handler — always DEBUG
+    file_handler = logging.FileHandler("scraper.log", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    root.addHandler(file_handler)
 
 from db import (
     init_db, upsert_procurement, get_all_procurements, update_score,
@@ -95,15 +118,15 @@ def score_all(on_progress: Callable[[str], None] | None = None) -> int:
     return len(procurements)
 
 
-def run_ai_prefilter(ollama_model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", on_progress: Callable[[str], None] | None = None):
+def run_ai_prefilter(ollama_model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", force: bool = False, on_progress: Callable[[str], None] | None = None):
     """Run local AI prefilter on procurements that passed sector gate (score > 0)."""
-    msg = f"Kör lokal AI-prefilter (modell: {ollama_model})..."
+    msg = f"Kör lokal AI-prefilter (modell: {ollama_model}){' [FORCE]' if force else ''}..."
     if on_progress:
         on_progress(msg)
     else:
         print(f"\n{msg}")
     from analyzer import ollama_prefilter_all
-    ollama_prefilter_all(model=ollama_model, min_score=1)
+    ollama_prefilter_all(model=ollama_model, min_score=1, force=force)
     if on_progress:
         on_progress("AI-prefilter klar")
 
@@ -219,11 +242,16 @@ def check_watch_lists(on_progress: Callable[[str], None] | None = None) -> int:
     return notified
 
 
-def backfill_missing_data(source: str | None = None, on_progress: Callable[[str], None] | None = None) -> int:
-    """Re-fetch detail pages for procurements missing buyer/description/geography."""
+def backfill_missing_data(source: str | None = None, on_progress: Callable[[str], None] | None = None) -> dict[str, int]:
+    """Re-fetch detail pages for procurements missing buyer/description/geography.
+
+    Returns counters: {attempted, succeeded, failed, skipped}.
+    """
     import httpx
     from scrapers.kommers import KommersScraper
     from scrapers.eavrop import EAvropScraper
+
+    counters = {"attempted": 0, "succeeded": 0, "failed": 0, "skipped": 0}
 
     missing = get_procurements_missing_data(source)
     if not missing:
@@ -232,7 +260,7 @@ def backfill_missing_data(source: str | None = None, on_progress: Callable[[str]
             on_progress(msg)
         else:
             print(msg)
-        return 0
+        return counters
 
     msg = f"Backfill: {len(missing)} upphandlingar saknar data"
     if on_progress:
@@ -240,12 +268,17 @@ def backfill_missing_data(source: str | None = None, on_progress: Callable[[str]
     else:
         print(msg)
 
-    updated = 0
     with httpx.Client(timeout=15, follow_redirects=True) as client:
         for i, proc in enumerate(missing):
             url = proc.get("url", "")
             src = proc["source"]
             fields: dict = {}
+
+            if not url:
+                counters["skipped"] += 1
+                continue
+
+            counters["attempted"] += 1
 
             try:
                 if src == "kommers" and not proc.get("buyer"):
@@ -262,20 +295,28 @@ def backfill_missing_data(source: str | None = None, on_progress: Callable[[str]
 
                 if fields:
                     update_procurement_fields(proc["id"], **fields)
-                    updated += 1
+                    counters["succeeded"] += 1
+                    logger.debug("Backfill OK: id=%d fields=%s", proc["id"], list(fields.keys()))
+                else:
+                    counters["skipped"] += 1
 
-            except Exception:
+            except Exception as e:
+                counters["failed"] += 1
+                logger.warning("Backfill failed: id=%d url=%s error=%s", proc["id"], url, e)
                 continue
 
             if on_progress and (i + 1) % 20 == 0:
-                on_progress(f"Backfill: {i + 1}/{len(missing)} ({updated} uppdaterade)")
+                on_progress(f"Backfill: {i + 1}/{len(missing)} ({counters['succeeded']} uppdaterade)")
 
-    msg = f"Backfill klar: {updated}/{len(missing)} uppdaterade"
+    msg = (
+        f"Backfill klar: {counters['succeeded']}/{counters['attempted']} lyckades, "
+        f"{counters['failed']} misslyckades, {counters['skipped']} hoppade over"
+    )
     if on_progress:
         on_progress(msg)
     else:
         print(msg)
-    return updated
+    return counters
 
 
 def run(sources: list[str] | None = None, skip_scoring: bool = False,
@@ -390,9 +431,27 @@ def main():
         action="store_true",
         help="Hoppa över Ollama-djupanalys",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Visa DEBUG-meddelanden i konsolen",
+    )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Kör backfill av saknad data (buyer/description/geography) + omscoring + omlänkning",
+    )
     args = parser.parse_args()
 
-    if args.score_only:
+    configure_logging(verbose=args.verbose)
+
+    if args.backfill:
+        init_db()
+        updated = backfill_missing_data()
+        if updated > 0:
+            score_all()
+            link_accounts()
+    elif args.score_only:
         score_all()
         run_ai_prefilter(ollama_model=args.ollama_model)
         if not args.skip_analysis:
