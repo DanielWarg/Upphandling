@@ -12,20 +12,12 @@ from db import search_procurements, get_analysis, get_pipeline_item
 def _find_relevant_procurements(question: str, max_results: int = 5) -> list[dict]:
     """Search procurements relevant to the user's question.
 
-    Strategy: always start with top pipeline leads as baseline, then add
-    keyword-specific hits from the question.
+    Strategy:
+    1. Extract keywords and search for buyer/keyword-specific hits
+    2. Prioritize buyer matches when a specific organization is mentioned
+    3. Fill remaining slots with top AI-relevant leads as baseline
     """
-    results: list[dict] = []
-    seen_ids: set[int] = set()
-
-    # 1. Always include top AI-relevant procurements as baseline
-    top_leads = search_procurements(min_score=1, ai_relevance="relevant")
-    for h in top_leads:
-        if h["id"] not in seen_ids:
-            seen_ids.add(h["id"])
-            results.append(h)
-
-    # 2. Add keyword-specific hits from the question
+    import re as _re
     skip = {
         "vad", "hur", "vilka", "finns", "det", "som", "för", "med", "och",
         "kan", "har", "den", "att", "ett", "ska", "till", "från", "om",
@@ -33,17 +25,47 @@ def _find_relevant_procurements(question: str, max_results: int = 5) -> list[dic
         "mest", "bäst", "aktuell", "aktuella", "hast", "viktigaste",
         "vilken", "just", "förslag", "dokument", "förbereda", "lämna",
         "anbud", "bör", "behöver", "tycker", "tror", "kolla",
+        "jämför", "jämföra", "jämförelse", "mellan", "två", "båda",
     }
-    words = [w for w in question.lower().split() if len(w) > 2 and w not in skip]
+    # Strip Swedish possessive (:s, 's) then punctuation before filtering
+    raw = question.lower().split()
+    stripped = [_re.sub(r"[:'][s]$", "", w) for w in raw]
+    cleaned = [_re.sub(r"[^a-zåäö0-9]", "", w) for w in stripped]
+    words = [w for w in cleaned if len(w) > 1 and w not in skip]
+
+    # 1. Keyword-specific search — these get priority
+    keyword_hits: list[dict] = []
+    seen_ids: set[int] = set()
 
     for word in words[:6]:
-        hits = search_procurements(query=word, min_score=1)
+        hits = search_procurements(query=word, min_score=0)
         for h in hits:
             if h["id"] not in seen_ids:
                 seen_ids.add(h["id"])
-                results.append(h)
+                keyword_hits.append(h)
 
-    # Sort by score descending and limit
+    # 2. If keyword hits found, prioritize them (sorted by score)
+    keyword_hits.sort(key=lambda p: p.get("score", 0), reverse=True)
+
+    # 3. Fill remaining slots with top AI-relevant leads as baseline
+    baseline: list[dict] = []
+    top_leads = search_procurements(min_score=1, ai_relevance="relevant")
+    for h in top_leads:
+        if h["id"] not in seen_ids:
+            seen_ids.add(h["id"])
+            baseline.append(h)
+
+    # Combine: keyword hits first, then baseline
+    if keyword_hits:
+        # Give keyword hits more slots when they exist
+        kw_limit = min(len(keyword_hits), max_results)
+        results = keyword_hits[:kw_limit]
+        remaining = max_results - len(results)
+        if remaining > 0:
+            results.extend(baseline[:remaining])
+    else:
+        results = baseline[:max_results]
+
     results.sort(key=lambda p: p.get("score", 0), reverse=True)
     return results[:max_results]
 
