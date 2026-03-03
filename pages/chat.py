@@ -1,6 +1,7 @@
 """AI-chatt — ställ frågor om upphandlingar med lokal LLM."""
 
 import streamlit as st
+from datetime import date, datetime
 
 from db import search_procurements, get_analysis, get_pipeline_item
 
@@ -15,6 +16,7 @@ def _find_relevant_procurements(question: str, max_results: int = 5) -> list[dic
         "vad", "hur", "vilka", "finns", "det", "som", "för", "med", "och",
         "kan", "har", "den", "att", "ett", "ska", "till", "från", "om",
         "alla", "visa", "berätta", "upphandling", "upphandlingar",
+        "mest", "bäst", "aktuell", "aktuella", "hast", "viktigaste",
     }
     words = [w for w in question.lower().split() if len(w) > 2 and w not in skip]
 
@@ -29,13 +31,29 @@ def _find_relevant_procurements(question: str, max_results: int = 5) -> list[dic
                 seen_ids.add(h["id"])
                 results.append(h)
 
-    # If no keyword hits, fall back to all scored procurements
+    # If no keyword hits, fall back to all pipeline-relevant procurements
     if not results:
-        results = search_procurements(min_score=1)
+        results = search_procurements(min_score=1, ai_relevance="relevant")
 
     # Sort by score descending and limit
     results.sort(key=lambda p: p.get("score", 0), reverse=True)
     return results[:max_results]
+
+
+def _days_until(deadline_str: str | None) -> str:
+    """Calculate days until deadline from a date string."""
+    if not deadline_str:
+        return "ingen deadline"
+    try:
+        dl = datetime.strptime(deadline_str[:10], "%Y-%m-%d").date()
+        delta = (dl - date.today()).days
+        if delta < 0:
+            return f"utgangen ({-delta} dagar sedan)"
+        if delta == 0:
+            return "IDAG"
+        return f"{delta} dagar kvar"
+    except (ValueError, TypeError):
+        return "okant format"
 
 
 def _build_context(procurements: list[dict]) -> str:
@@ -45,16 +63,21 @@ def _build_context(procurements: list[dict]) -> str:
 
     parts = []
     for p in procurements:
+        deadline_raw = (p.get("deadline") or "")[:10]
+        deadline_info = _days_until(deadline_raw) if deadline_raw else "ingen deadline angiven"
+
         part = (
             f"### {p.get('title', 'Utan titel')}\n"
             f"- ID: {p['id']}\n"
-            f"- Köpare: {p.get('buyer') or 'Okänd'}\n"
-            f"- Källa: {p.get('source', '')}\n"
-            f"- Score: {p.get('score', 0)}\n"
+            f"- Kopare: {p.get('buyer') or 'Okand'}\n"
+            f"- Kalla: {p.get('source', '')}\n"
+            f"- HAST-score: {p.get('score', 0)}/100\n"
             f"- Geografi: {p.get('geography') or '-'}\n"
             f"- CPV: {p.get('cpv_codes') or '-'}\n"
-            f"- Deadline: {(p.get('deadline') or '-')[:10]}\n"
-            f"- AI-bedömning: {p.get('ai_relevance') or 'ej bedömd'}\n"
+            f"- Deadline: {deadline_raw or 'ej angiven'} ({deadline_info})\n"
+            f"- Uppskattat varde: {p.get('estimated_value') or 'ej angivet'}"
+            f"{' ' + (p.get('currency') or '') if p.get('estimated_value') else ''}\n"
+            f"- AI-bedomning: {p.get('ai_relevance') or 'ej bedomd'}\n"
         )
         desc = p.get("description") or ""
         if desc:
@@ -80,40 +103,43 @@ def _build_context(procurements: list[dict]) -> str:
     return "\n---\n".join(parts)
 
 
-CHAT_SYSTEM_PROMPT = """Du är en AI-assistent för HAST Utvecklings säljteam. Du hjälper till att svara på frågor om upphandlingar som finns i systemet.
+def _build_system_prompt() -> str:
+    """Build system prompt with current date."""
+    today = date.today().isoformat()
+    return f"""Du ar en AI-assistent for HAST Utvecklings saljteam. Dagens datum: {today}.
 
-HAST Utveckling erbjuder: ledarskapsutbildning, chefsutveckling, executive coaching, teamutveckling, organisationsutveckling, kommunikationsutbildning, förändringsledning, seminarier och workshops.
+HAST Utveckling erbjuder: ledarskapsutbildning, chefsutveckling, executive coaching, teamutveckling, organisationsutveckling, kommunikationsutbildning, forandringsledning, seminarier och workshops.
 
-Regler:
-- Svara ALLTID på svenska
-- Basera svaren på den upphandlingsdata du får — hitta inte på information
-- Var konkret och handlingsorienterad
-- Om du inte hittar relevant information, säg det tydligt
-- Referera till specifika upphandlingar med titel och ID när det är relevant
-- Håll svaren lagom korta men informativa"""
+REGLER:
+- Svara ALLTID pa svenska
+- Basera svaren ENBART pa upphandlingsdata du far — hitta INTE pa information, varden eller deadlines
+- Var kortfattad och konkret — max 10-15 meningar
+- Referera till upphandlingar med titel och ID
+- Nar du jamfor deadlines, anvand "dagar kvar"-vardet som ges i datan
+- Om ett varde eller en deadline saknas, skriv "ej angivet" — gissa inte
+- Avsluta med en tydlig rekommendation pa 1-2 rader"""
 
 
-def _chat_with_llm(messages: list[dict], context: str) -> str | None:
-    """Send chat messages to local LLM with procurement context."""
+def _chat_with_llm(question: str, context: str, history: list[dict]) -> str | None:
+    """Send question to local LLM with procurement context."""
     import os
     import httpx
 
     base_url = os.getenv("LLM_BASE_URL", "http://localhost:8081/v1")
 
-    # Build message list with context injected
-    llm_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    # Build messages: system + last 4 history messages + current question with context
+    llm_messages = [{"role": "system", "content": _build_system_prompt()}]
 
-    # Add context as first user message if this is the first exchange
-    for i, msg in enumerate(messages):
-        if i == len(messages) - 1 and msg["role"] == "user":
-            # Last user message — inject context
-            augmented = (
-                f"## Relevanta upphandlingar från databasen\n\n{context}\n\n"
-                f"---\n\n## Användarens fråga\n{msg['content']}"
-            )
-            llm_messages.append({"role": "user", "content": augmented})
-        else:
-            llm_messages.append(msg)
+    # Include recent history for continuity (max 4 messages = 2 exchanges)
+    for msg in history[-4:]:
+        llm_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # Current question with fresh context
+    augmented = (
+        f"## Upphandlingsdata fran databasen\n\n{context}\n\n"
+        f"---\n\n## Fraga\n{question}"
+    )
+    llm_messages.append({"role": "user", "content": augmented})
 
     try:
         resp = httpx.post(
@@ -121,7 +147,7 @@ def _chat_with_llm(messages: list[dict], context: str) -> str | None:
             json={
                 "model": "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf",
                 "messages": llm_messages,
-                "temperature": 0.3,
+                "temperature": 0.2,
                 "stream": False,
             },
             timeout=120,
@@ -129,7 +155,7 @@ def _chat_with_llm(messages: list[dict], context: str) -> str | None:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except httpx.ConnectError:
-        return "Kunde inte ansluta till AI-servern. Kontrollera att llama-server körs på port 8081."
+        return "Kunde inte ansluta till AI-servern. Kontrollera att llama-server kor pa port 8081."
     except Exception as e:
         return f"AI-fel: {e}"
 
@@ -157,7 +183,6 @@ def render_chat():
     # Chat input
     if prompt := st.chat_input("Ställ en fråga om upphandlingar..."):
         # Show user message
-        st.session_state["chat_messages"].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
@@ -169,12 +194,16 @@ def render_chat():
 
             with st.spinner("Tänker..."):
                 response = _chat_with_llm(
-                    st.session_state["chat_messages"],
+                    prompt,
                     context,
+                    st.session_state["chat_messages"],
                 )
 
             if response:
                 st.markdown(response)
+                st.session_state["chat_messages"].append(
+                    {"role": "user", "content": prompt}
+                )
                 st.session_state["chat_messages"].append(
                     {"role": "assistant", "content": response}
                 )
