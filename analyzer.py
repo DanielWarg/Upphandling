@@ -405,7 +405,12 @@ teamutveckling, organisationsförändring, kompetensutveckling inom mjuka/HR-rel
 
 IRRELEVANT: Teknisk IT-utbildning, yrkesutbildning (svetsning, truckkort), medicinsk utbildning,
 körkortsutbildning, språkkurser, ren rekrytering/bemanning, köp av varor/material/hårdvara,
-bygg/anläggning, transport/drift, systemutveckling, laboratorietjänster.
+bygg/anläggning, transport/drift, systemutveckling, laboratorietjänster,
+företagshälsovård, friskvård, rehabilitering, ergonomi,
+hot och våld-utbildning, brandskyddsutbildning, säkerhetsutbildning,
+förmedling av talare/föreläsare, bokning av externa talare,
+allmän affärskonsulting utan utbildningsfokus,
+lantbruksrådgivning, jordbruksutbildning.
 
 Returnera ENBART JSON: {"relevant": true/false, "reasoning": "kort motivering på svenska"}"""
 

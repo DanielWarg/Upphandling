@@ -75,15 +75,15 @@ MEDIUM_WEIGHT_KEYWORDS: dict[str, int] = {
     "personalutveckling": 12,
     "organisationsförändring": 12,
     "förändringsarbete": 12,
-    "arbetsmiljö": 10,
+    "arbetsmiljö": 3,
     "stresshantering": 15,
-    "konflikthantering": 15,
+    "konflikthantering": 5,
     "feedbackkultur": 12,
     "gruppdynamik": 15,
     "teambuilding": 12,
     "seminarium": 10,
     "workshop": 10,
-    "föreläsning": 8,
+    "föreläsning": 3,
     "inspirationsföreläsning": 12,
     "ledarskap": 10,
     "medarbetarskap": 10,
@@ -159,6 +159,17 @@ BLOCKED_SECTORS: dict[str, list[str]] = {
     "Undersökning/analys": [
         "undersökningstjänster", "marknadsundersökning",
         "telefonnummersättning", "statistisk",
+    ],
+    "Hälsovård/företagshälsa": [
+        "företagshälsovård", "hälsovård", "rehabilitering", "ergonomi",
+        "hälsokontroll", "friskvård",
+    ],
+    "Säkerhetsutbildning": [
+        "hot och våld", "brandskyddsutbildning", "hjlr", "första hjälpen",
+        "truckkort", "truckutbildning",
+    ],
+    "Förmedling/bokning": [
+        "förmedling av talare", "bokningsförmedling", "artistförmedling",
     ],
 }
 
