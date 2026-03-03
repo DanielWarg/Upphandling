@@ -33,7 +33,7 @@ from db import (
     auto_link_procurements_to_accounts, get_all_active_watches, create_notification,
     has_notification, archive_expired_procurements, cross_source_deduplicate,
     create_deadline_calendar_events, expire_pipeline_entries, deduplicate_notifications,
-    get_procurements_missing_data, update_procurement_fields,
+    get_procurements_missing_data, update_procurement_fields, purge_expired,
 )
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
@@ -341,14 +341,14 @@ def run(sources: list[str] | None = None, skip_scoring: bool = False,
     else:
         print(msg)
 
-    # Archive expired
-    msg = "Arkiverar utgangna upphandlingar..."
+    # Purge expired
+    msg = "Rensar utgångna upphandlingar..."
     if on_progress:
         on_progress(msg)
     else:
         print(f"\n{msg}")
-    archived = archive_expired_procurements()
-    msg = f"Arkiverade: {archived}"
+    purge_result = purge_expired()
+    msg = f"Rensade: {purge_result['purged']} ({purge_result['had_deadline']} deadline passerad, {purge_result['old_no_deadline']} äldre än 90 dagar)"
     if on_progress:
         on_progress(msg)
     else:

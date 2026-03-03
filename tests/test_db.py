@@ -322,3 +322,43 @@ class TestMissingData:
         proc = db.get_procurement(row_id)
         assert proc["buyer"] == "New Buyer"
         assert proc["description"] == "New desc"
+
+
+class TestPurgeExpired:
+    def test_purges_expired_deadline(self, tmp_db):
+        db.upsert_procurement(_make_proc(source_id="OLD-1", deadline="2020-01-01"))
+        db.upsert_procurement(_make_proc(source_id="NEW-1", deadline="2099-12-31"))
+        result = db.purge_expired()
+        assert result["purged"] == 1
+        assert result["had_deadline"] == 1
+        assert db.get_procurement(1) is None  # OLD-1 gone
+        assert db.get_procurement(2) is not None  # NEW-1 kept
+
+    def test_purges_old_without_deadline(self, tmp_db):
+        db.upsert_procurement(_make_proc(source_id="OLD-ND", deadline=None, published_date="2020-01-01"))
+        db.upsert_procurement(_make_proc(source_id="NEW-ND", deadline=None, published_date="2099-01-01"))
+        result = db.purge_expired()
+        assert result["purged"] == 1
+        assert result["old_no_deadline"] == 1
+
+    def test_purges_related_data(self, tmp_db):
+        pid = db.upsert_procurement(_make_proc(source_id="REL-1", deadline="2020-01-01", score=50))
+        db.save_analysis(pid, {"kravsammanfattning": "test"})
+        db.ensure_pipeline_entry(pid)
+        db.add_procurement_note(pid, "admin", "en anteckning")
+        result = db.purge_expired()
+        assert result["purged"] == 1
+        assert db.get_analysis(pid) is None
+        assert db.get_pipeline_item(pid) is None
+        assert db.get_procurement_notes(pid) == []
+
+    def test_nothing_to_purge(self, tmp_db):
+        db.upsert_procurement(_make_proc(source_id="FRESH", deadline="2099-12-31"))
+        result = db.purge_expired()
+        assert result["purged"] == 0
+
+    def test_custom_max_age(self, tmp_db):
+        db.upsert_procurement(_make_proc(source_id="AGE-1", deadline=None, published_date="2026-02-01"))
+        # 30 days ago should be purged with max_age=10
+        result = db.purge_expired(max_age_days=10)
+        assert result["purged"] == 1

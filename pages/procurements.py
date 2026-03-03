@@ -365,6 +365,17 @@ def _render_kanban():
     med = [p for p in visible if 30 <= (p.get("score") or 0) < 60]
     low = [p for p in visible if 1 <= (p.get("score") or 0) < 30]
 
+    # --- Export all button ---
+    from pdf_export import save_procurement_pdf, save_batch_zip, EXPORT_DIR
+
+    if visible:
+        if st.button(f"Exportera alla {len(visible)} som ZIP", key="kb_export_all"):
+            all_ids = [p["id"] for p in visible]
+            path = save_batch_zip(all_ids)
+            if path:
+                size_kb = path.stat().st_size / 1024
+                st.success(f"ZIP sparad: {path.name} ({size_kb:.0f} KB) i {EXPORT_DIR}")
+
     col_h, col_m, col_l = st.columns(3)
 
     def _render_column(col, title: str, accent: str, items: list, max_show: int = 50):
@@ -438,8 +449,15 @@ def _render_kanban():
                     f'</div>',
                     unsafe_allow_html=True,
                 )
-                if st.button("Visa", key=f"kb_{p['id']}", use_container_width=True):
-                    show_procurement_dialog(p["id"])
+                btn_c1, btn_c2 = st.columns(2)
+                with btn_c1:
+                    if st.button("Visa", key=f"kb_{p['id']}", use_container_width=True):
+                        show_procurement_dialog(p["id"])
+                with btn_c2:
+                    if st.button("PDF", key=f"kb_pdf_{p['id']}", use_container_width=True):
+                        path = save_procurement_pdf(p["id"])
+                        if path:
+                            st.toast(f"Sparad: {path.name}")
 
             if len(items) > max_show:
                 st.caption(f"+{len(items) - max_show} till")
@@ -484,7 +502,36 @@ def _render_search():
         df = pd.DataFrame(results)[["id", "title", "buyer", "score", "source", "published_date", "deadline", "geography"]]
         df = df.rename(columns={"published_date": "Publicerad", "deadline": "Deadline"})
         df = df.sort_values("Publicerad", ascending=False, na_position="last")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        selection = st.dataframe(
+            df, use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="multi-row",
+        )
+
+        # --- PDF export for selected rows ---
+        selected_rows = selection.selection.rows if selection and selection.selection else []
+        if selected_rows:
+            selected_ids = [int(df.iloc[r]["id"]) for r in selected_rows]
+            n = len(selected_ids)
+
+            from pdf_export import save_batch_pdfs, save_batch_zip, EXPORT_DIR
+
+            st.markdown(f"**{n} markerade** — sparas till `{EXPORT_DIR}`")
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                if st.button(f"Exportera {n} PDF", key="pdf_export_local"):
+                    saved = save_batch_pdfs(selected_ids)
+                    if saved:
+                        st.success(f"{len(saved)} PDF sparade i {EXPORT_DIR}")
+                    else:
+                        st.warning("Inga PDF:er kunde genereras.")
+            with ec2:
+                if st.button(f"Exportera {n} PDF som ZIP", key="pdf_export_zip"):
+                    path = save_batch_zip(selected_ids)
+                    if path:
+                        size_kb = path.stat().st_size / 1024
+                        st.success(f"ZIP sparad: {path.name} ({size_kb:.0f} KB)")
+                    else:
+                        st.warning("Inga PDF:er kunde genereras.")
 
         # Quick add to pipeline
         st.markdown("---")

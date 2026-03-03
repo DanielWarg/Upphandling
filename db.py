@@ -1743,6 +1743,52 @@ def get_procurements_missing_data(source: str | None = None) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def purge_expired(max_age_days: int = 90) -> dict:
+    """Delete expired procurements and all related data.
+
+    Removes procurements where:
+    - deadline has passed, OR
+    - no deadline and published_date is older than max_age_days
+
+    Returns dict with counts: {purged, had_deadline, old_no_deadline}.
+    """
+    conn = get_connection()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).strftime("%Y-%m-%d")
+
+    # Find IDs to purge
+    rows = conn.execute("""
+        SELECT id FROM procurements
+        WHERE (deadline IS NOT NULL AND deadline != '' AND deadline < ?)
+           OR ((deadline IS NULL OR deadline = '') AND published_date < ?)
+    """, (today, cutoff)).fetchall()
+    ids = [r[0] for r in rows]
+
+    if not ids:
+        conn.close()
+        return {"purged": 0, "had_deadline": 0, "old_no_deadline": 0}
+
+    placeholders = ",".join("?" * len(ids))
+
+    # Count categories before delete
+    had_deadline = conn.execute(
+        f"SELECT COUNT(*) FROM procurements WHERE id IN ({placeholders}) AND deadline IS NOT NULL AND deadline != ''",
+        ids,
+    ).fetchone()[0]
+    old_no_deadline = len(ids) - had_deadline
+
+    # Delete from child tables first (foreign keys)
+    for table in ("analyses", "labels", "pipeline", "procurement_notes"):
+        conn.execute(f"DELETE FROM {table} WHERE procurement_id IN ({placeholders})", ids)
+
+    # Delete procurements
+    conn.execute(f"DELETE FROM procurements WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    conn.close()
+
+    return {"purged": len(ids), "had_deadline": had_deadline, "old_no_deadline": old_no_deadline}
+
+
 def update_procurement_fields(procurement_id: int, **kwargs):
     """Update specific fields on a procurement (for backfill)."""
     allowed = {"buyer", "description", "geography", "estimated_value", "deadline"}

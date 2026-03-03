@@ -207,18 +207,19 @@ def _render_cleanup_section():
     with col1:
         st.markdown("**Arkivera utgangna**")
         st.caption("Markerar upphandlingar med passerad deadline som 'expired'")
-        if st.button("Arkivera utgangna", use_container_width=True):
-            from db import archive_expired_procurements
-            count = archive_expired_procurements()
-            st.success(f"Arkiverade {count} utgangna upphandlingar")
+        if st.button("Purga utgangna", use_container_width=True):
+            from db import purge_expired
+            result = purge_expired()
+            st.success(f"Rensade {result['purged']} ({result['had_deadline']} deadline passerad, {result['old_no_deadline']} aldre an 90 dagar)")
 
     with col2:
-        st.markdown("**Rensa gamla**")
-        st.caption("Tar bort upphandlingar som varit expired i >180 dagar")
-        if st.button("Rensa gamla expired", use_container_width=True):
-            from db import purge_old_expired
-            count = purge_old_expired()
-            st.success(f"Borttagna: {count} gamla expired-poster")
+        st.markdown("**Purga utgangna (anpassad)**")
+        st.caption("Valj max alder i dagar for upphandlingar utan deadline")
+        purge_days = st.number_input("Max alder (dagar)", min_value=30, max_value=365, value=90, key="purge_days")
+        if st.button("Purga", use_container_width=True):
+            from db import purge_expired
+            result = purge_expired(max_age_days=int(purge_days))
+            st.success(f"Rensade {result['purged']} upphandlingar")
 
     with col3:
         st.markdown("**Cross-source dedup**")
