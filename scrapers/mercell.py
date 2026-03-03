@@ -55,6 +55,9 @@ KEYWORD_QUERIES = [
     "organisationsutveckling",
     "teamutveckling",
     "chefsutbildning",
+    "ledarskapsutveckling",
+    "utvecklande ledarskap",
+    "handledning chefer",
 ]
 
 
