@@ -48,7 +48,7 @@ def _render_fetch_section():
 
     sources = st.multiselect(
         "Valj kallor",
-        options=["ted", "kommers", "eavrop"],
+        options=["ted", "kommers", "eavrop", "mercell"],
         default=["ted", "kommers", "eavrop"],
     )
 
