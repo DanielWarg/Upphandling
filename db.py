@@ -432,8 +432,9 @@ def deduplicate_procurements() -> int:
     if deleted > 0:
         ids = [row["id"] for row in dupes]
         placeholders = ",".join("?" * len(ids))
-        conn.execute(f"DELETE FROM analyses WHERE procurement_id IN ({placeholders})", ids)
-        conn.execute(f"DELETE FROM labels WHERE procurement_id IN ({placeholders})", ids)
+        for table in ("analyses", "labels", "pipeline", "notifications",
+                      "calendar_events", "procurement_notes"):
+            conn.execute(f"DELETE FROM {table} WHERE procurement_id IN ({placeholders})", ids)
         conn.execute(f"DELETE FROM procurements WHERE id IN ({placeholders})", ids)
         conn.commit()
 
