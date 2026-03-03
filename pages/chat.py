@@ -10,30 +10,38 @@ from db import search_procurements, get_analysis, get_pipeline_item
 # Context retrieval — find relevant procurements for the question
 # ---------------------------------------------------------------------------
 def _find_relevant_procurements(question: str, max_results: int = 5) -> list[dict]:
-    """Search procurements relevant to the user's question."""
-    # Extract meaningful words (skip short/common ones)
+    """Search procurements relevant to the user's question.
+
+    Strategy: always start with top pipeline leads as baseline, then add
+    keyword-specific hits from the question.
+    """
+    results: list[dict] = []
+    seen_ids: set[int] = set()
+
+    # 1. Always include top AI-relevant procurements as baseline
+    top_leads = search_procurements(min_score=1, ai_relevance="relevant")
+    for h in top_leads:
+        if h["id"] not in seen_ids:
+            seen_ids.add(h["id"])
+            results.append(h)
+
+    # 2. Add keyword-specific hits from the question
     skip = {
         "vad", "hur", "vilka", "finns", "det", "som", "för", "med", "och",
         "kan", "har", "den", "att", "ett", "ska", "till", "från", "om",
         "alla", "visa", "berätta", "upphandling", "upphandlingar",
         "mest", "bäst", "aktuell", "aktuella", "hast", "viktigaste",
+        "vilken", "just", "förslag", "dokument", "förbereda", "lämna",
+        "anbud", "bör", "behöver", "tycker", "tror", "kolla",
     }
     words = [w for w in question.lower().split() if len(w) > 2 and w not in skip]
 
-    results: list[dict] = []
-    seen_ids: set[int] = set()
-
-    # Search each keyword
     for word in words[:6]:
         hits = search_procurements(query=word, min_score=1)
         for h in hits:
             if h["id"] not in seen_ids:
                 seen_ids.add(h["id"])
                 results.append(h)
-
-    # If no keyword hits, fall back to all pipeline-relevant procurements
-    if not results:
-        results = search_procurements(min_score=1, ai_relevance="relevant")
 
     # Sort by score descending and limit
     results.sort(key=lambda p: p.get("score", 0), reverse=True)
@@ -112,11 +120,12 @@ HAST Utveckling erbjuder: ledarskapsutbildning, chefsutveckling, executive coach
 
 REGLER:
 - Svara ALLTID pa svenska
-- Basera svaren ENBART pa upphandlingsdata du far — hitta INTE pa information, varden eller deadlines
+- Basera svaren ENBART pa upphandlingsdata du far — hitta INTE pa information
+- HALLUCINATION-FORBUD: Hitta ALDRIG pa siffror, varden, belopp eller datum som inte star i datan. Om "Uppskattat varde: ej angivet" — skriv "varde ej angivet", hitta inte pa ett belopp.
+- HAST-score ar en intern relevansscore 0-100, INTE en matchningsgrad i procent
 - Var kortfattad och konkret — max 10-15 meningar
 - Referera till upphandlingar med titel och ID
 - Nar du jamfor deadlines, anvand "dagar kvar"-vardet som ges i datan
-- Om ett varde eller en deadline saknas, skriv "ej angivet" — gissa inte
 - Avsluta med en tydlig rekommendation pa 1-2 rader"""
 
 
