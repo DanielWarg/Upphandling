@@ -1475,6 +1475,21 @@ def has_notification(username: str, procurement_id: int, notification_type: str)
     return row is not None
 
 
+def remove_zero_score_pipeline_entries() -> int:
+    """Remove pipeline entries for procurements that now have score=0. Returns count removed."""
+    conn = get_connection()
+    cur = conn.execute("""
+        DELETE FROM pipeline
+        WHERE procurement_id IN (
+            SELECT id FROM procurements WHERE COALESCE(score, 0) = 0
+        )
+    """)
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
 def expire_pipeline_entries() -> int:
     """Move expired procurements in pipeline to 'forlorad' stage. Returns count updated."""
     conn = get_connection()

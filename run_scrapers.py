@@ -34,6 +34,7 @@ from db import (
     has_notification, archive_expired_procurements, cross_source_deduplicate,
     create_deadline_calendar_events, expire_pipeline_entries, deduplicate_notifications,
     get_procurements_missing_data, update_procurement_fields, purge_expired,
+    remove_zero_score_pipeline_entries,
 )
 from scorer import score_procurement
 from scrapers import ALL_SCRAPERS
@@ -356,6 +357,13 @@ def run(sources: list[str] | None = None, skip_scoring: bool = False,
 
     if not skip_scoring:
         score_all(on_progress=on_progress)
+        cleaned = remove_zero_score_pipeline_entries()
+        if cleaned:
+            msg = f"Pipeline: {cleaned} poster borttagna (score=0)"
+            if on_progress:
+                on_progress(msg)
+            else:
+                print(msg)
 
     run_ai_prefilter(ollama_model=ollama_model, on_progress=on_progress)
 
@@ -453,6 +461,9 @@ def main():
             link_accounts()
     elif args.score_only:
         score_all()
+        cleaned = remove_zero_score_pipeline_entries()
+        if cleaned:
+            print(f"Pipeline: {cleaned} poster borttagna (score=0)")
         run_ai_prefilter(ollama_model=args.ollama_model)
         if not args.skip_analysis:
             run_deep_analysis(ollama_model=args.ollama_model)
