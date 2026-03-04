@@ -16,6 +16,7 @@ from db import (
     delete_company,
     get_company_matches,
     update_match_status,
+    get_bidrag_sources,
     BIDRAG_PIPELINE_STAGES,
     BIDRAG_STAGE_LABELS,
     STAGE_LABELS,
@@ -33,6 +34,7 @@ BIDRAG_STAGE_COLORS = {
     "inskickad": "#3b82f6",
     "beviljad": "#22c55e",
     "avslagen": "#ef4444",
+    "beviljad_avslagen": "#22c55e",
 }
 
 
@@ -43,7 +45,7 @@ def render_bidrag():
     """Render bidrag page with Kanban, Sök, and Företag tabs."""
     st.markdown(
         '<div class="topbar"><h1>Bidrag</h1>'
-        '<p>Bidragsbevakning, matchning och kundforetag</p></div>',
+        '<p>Bidragsbevakning, matchning och kundföretag</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -158,6 +160,14 @@ def _render_bidrag_kanban():
                 if st.button("Visa", key=f"bk_{item['id']}", use_container_width=True):
                     show_procurement_dialog(item["id"])
 
+            if len(items) > 30:
+                overflow = len(items) - 30
+                st.markdown(
+                    f'<div style="padding:8px;text-align:center;color:var(--text-3);'
+                    f'font-size:11px;font-style:italic">...och {overflow} till</div>',
+                    unsafe_allow_html=True,
+                )
+
 
 # ---------------------------------------------------------------------------
 # Sök tab
@@ -170,7 +180,8 @@ def _render_bidrag_search():
     with c1:
         query = st.text_input("Fritext", placeholder="t.ex. innovation", key="bidrag_search_q")
     with c2:
-        source_filter = st.selectbox("Källa", ["Alla", "vinnova", "tillvaxtverket"], key="bidrag_search_src")
+        source_options = ["Alla"] + get_bidrag_sources()
+        source_filter = st.selectbox("Källa", source_options, key="bidrag_search_src")
     with c3:
         score_range = st.slider("Score", 0, 100, (0, 100), key="bidrag_search_score")
     with c4:
@@ -209,7 +220,7 @@ def _render_bidrag_search():
                 st.success("Tillagd i bidragspipeline!")
     else:
         st.markdown(
-            '<div class="empty"><h3>Inga bidrag hittades</h3><p>Prova att andra filtren.</p></div>',
+            '<div class="empty"><h3>Inga bidrag hittades</h3><p>Prova att ändra filtren.</p></div>',
             unsafe_allow_html=True,
         )
 
@@ -223,32 +234,32 @@ def _render_companies():
 
     st.markdown(
         '<div style="font-weight:700;font-size:16px;color:var(--text-0);margin-bottom:12px">'
-        'Kundforetag</div>',
+        'Kundföretag</div>',
         unsafe_allow_html=True,
     )
 
     # Add company form
-    with st.expander("Lagg till foretag", expanded=False):
+    with st.expander("Lägg till företag", expanded=False):
         fc1, fc2 = st.columns(2)
         with fc1:
-            new_name = st.text_input("Foretagsnamn", key="new_company_name")
+            new_name = st.text_input("Företagsnamn", key="new_company_name")
         with fc2:
             new_url = st.text_input("Webbadress", key="new_company_url", placeholder="https://...")
-        if st.button("Lagg till", key="add_company"):
+        if st.button("Lägg till", key="add_company"):
             if new_name.strip():
                 try:
                     create_company(new_name.strip(), new_url.strip(), current_user["username"])
-                    st.success(f"Foretag '{new_name.strip()}' tillagt!")
+                    st.success(f"Företag '{new_name.strip()}' tillagt!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Kunde inte lagga till: {e}")
+                    st.error(f"Kunde inte lägga till: {e}")
 
     # List companies
     companies = get_all_companies()
     if not companies:
         st.markdown(
-            '<div class="empty"><h3>Inga foretag registrerade</h3>'
-            '<p>Lagg till kundforetag ovan for att borja matcha mot bidrag.</p></div>',
+            '<div class="empty"><h3>Inga företag registrerade</h3>'
+            '<p>Lägg till kundföretag ovan för att börja matcha mot bidrag.</p></div>',
             unsafe_allow_html=True,
         )
         return
@@ -263,7 +274,7 @@ def _render_companies():
         profile_status = "Profil klar" if has_profile else "Ej analyserad"
         profile_color = "#4ade80" if has_profile else "#71717a"
 
-        with st.expander(f"{name} — {industry or 'Okand bransch'}", expanded=False):
+        with st.expander(f"{name} — {industry or 'Okänd bransch'}", expanded=False):
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'
                 f'<span style="font-size:12px;color:var(--text-1)">Webb: {esc(url) or "Ej angiven"}</span>'
@@ -308,9 +319,9 @@ def _render_companies():
                         else:
                             st.error("Kunde inte analysera webbplatsen.")
             with bc2:
-                if st.button("Sok matchningar", key=f"match_{cid}"):
+                if st.button("Sök matchningar", key=f"match_{cid}"):
                     if not has_profile:
-                        st.warning("Analysera webbplatsen forst.")
+                        st.warning("Analysera webbplatsen först.")
                     else:
                         from company_profiler import match_company_to_bidrag
                         with st.spinner("Matchar..."):
@@ -337,7 +348,7 @@ def _render_companies():
                     score = m.get("match_score", 0) or 0
                     status = m.get("status", "suggested")
                     status_colors = {"suggested": "#eab308", "accepted": "#4ade80", "dismissed": "#71717a"}
-                    status_labels = {"suggested": "Foreslagen", "accepted": "Accepterad", "dismissed": "Avfardad"}
+                    status_labels = {"suggested": "Föreslagen", "accepted": "Accepterad", "dismissed": "Avfärdad"}
                     sc = status_colors.get(status, "#71717a")
                     sl = status_labels.get(status, status)
 
@@ -364,7 +375,7 @@ def _render_companies():
                                 st.rerun()
                     with mc2:
                         if status != "dismissed":
-                            if st.button("Avfarda", key=f"dismiss_{m['id']}"):
+                            if st.button("Avfärda", key=f"dismiss_{m['id']}"):
                                 update_match_status(m["id"], "dismissed")
                                 st.rerun()
                     with mc3:

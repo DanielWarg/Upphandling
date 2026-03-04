@@ -188,3 +188,43 @@ class TestBidragScoring:
         kw_names = [m["keyword"] for m in breakdown["keyword_matches"]]
         assert "ledarskapsutveckling" in kw_names
         assert "organisationsutveckling" in kw_names
+
+    def test_empty_description_scores_on_title_only(self):
+        """Tillväxtverket items lack description — scoring should work on title alone."""
+        score, _, breakdown = score_procurement(
+            title="Utlysning: kompetensutveckling i offentlig sektor",
+            description="",
+            buyer="Tillväxtverket",
+            record_type="bidrag",
+        )
+        assert score > 0
+        assert breakdown["gate_passed"]
+
+    def test_minimal_gate_signal_utlysning(self):
+        """'utlysning' alone in title passes bidrag gate (it's in gate_keywords)."""
+        score, _, breakdown = score_procurement(
+            title="Utlysning om omställning",
+            description="",
+            record_type="bidrag",
+        )
+        assert breakdown["gate_passed"]
+
+    def test_esf_buyer_bonus(self):
+        """Europeiska socialfonden should give buyer bonus."""
+        score_esf, _, bd_esf = score_procurement(
+            title="Bidrag för kompetensutveckling",
+            buyer="Europeiska socialfonden",
+            record_type="bidrag",
+        )
+        assert bd_esf["buyer_bonus"] > 0
+
+    def test_blocked_overrides_education_signal_bidrag(self):
+        """Blocked sector should win even if education keywords are present."""
+        score, _, breakdown = score_procurement(
+            title="Systemutveckling och kompetensutveckling",
+            description="Mjukvaruutveckling med utbildningsinsats",
+            record_type="bidrag",
+        )
+        assert score == 0
+        assert not breakdown["gate_passed"]
+        assert "Blockerad" in breakdown["gate_reason"]

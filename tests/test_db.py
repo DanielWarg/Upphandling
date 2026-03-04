@@ -1,6 +1,9 @@
 """Tests for db.py — CRUD operations, upsert, scoring, pipeline, account linking, analysis."""
 
 import json
+import sqlite3
+
+import pytest
 
 import db
 from models import TenderRecord
@@ -394,3 +397,143 @@ class TestPurgeExpired:
         # 30 days ago should be purged with max_age=10
         result = db.purge_expired(max_age_days=10)
         assert result["purged"] == 1
+
+
+# ===========================================================================
+# TestSaveBidragMatch
+# ===========================================================================
+
+class TestSaveBidragMatch:
+    def _make_bidrag(self, source_id: str = "VINN-BM1") -> int:
+        return db.upsert_procurement(_make_proc(
+            source="vinnova", source_id=source_id, record_type="bidrag",
+        ))
+
+    def test_insert_new_match(self, tmp_db):
+        pid = self._make_bidrag()
+        cid = db.create_company("TestCo", "", "admin")
+        row_id = db.save_bidrag_match(pid, cid, 75.0, "Good match")
+        assert row_id > 0
+        matches = db.get_company_matches(cid)
+        assert len(matches) == 1
+        assert matches[0]["match_score"] == 75.0
+
+    def test_update_existing_match(self, tmp_db):
+        pid = self._make_bidrag()
+        cid = db.create_company("TestCo", "", "admin")
+        id1 = db.save_bidrag_match(pid, cid, 50.0, "OK")
+        id2 = db.save_bidrag_match(pid, cid, 80.0, "Better")
+        assert id1 == id2
+        matches = db.get_company_matches(cid)
+        assert len(matches) == 1
+        assert matches[0]["match_score"] == 80.0
+
+    def test_dismissed_preserved_on_rematch(self, tmp_db):
+        pid = self._make_bidrag()
+        cid = db.create_company("TestCo", "", "admin")
+        row_id = db.save_bidrag_match(pid, cid, 50.0, "OK")
+        db.update_match_status(row_id, "dismissed")
+        # Re-match should not overwrite dismissed
+        db.save_bidrag_match(pid, cid, 90.0, "Great")
+        matches = db.get_company_matches(cid)
+        assert len(matches) == 1
+        assert matches[0]["match_score"] == 50.0  # unchanged
+        assert matches[0]["status"] == "dismissed"
+
+    def test_returns_correct_row_id(self, tmp_db):
+        pid = self._make_bidrag()
+        cid = db.create_company("TestCo", "", "admin")
+        row_id = db.save_bidrag_match(pid, cid, 60.0, "Fine")
+        match = db.get_company_matches(cid)[0]
+        assert match["id"] == row_id
+
+
+# ===========================================================================
+# TestGetBidragSources
+# ===========================================================================
+
+class TestGetBidragSources:
+    def test_returns_unique_sources(self, tmp_db):
+        db.upsert_procurement(_make_proc(source="vinnova", source_id="V1", record_type="bidrag"))
+        db.upsert_procurement(_make_proc(source="tillvaxtverket", source_id="TV1", record_type="bidrag"))
+        db.upsert_procurement(_make_proc(source="vinnova", source_id="V2", record_type="bidrag"))
+        sources = db.get_bidrag_sources()
+        assert sorted(sources) == ["tillvaxtverket", "vinnova"]
+
+    def test_empty_without_bidrag(self, tmp_db):
+        db.upsert_procurement(_make_proc(source="ted", source_id="T1"))
+        sources = db.get_bidrag_sources()
+        assert sources == []
+
+
+# ===========================================================================
+# TestEnsurePipelineEntryBidrag
+# ===========================================================================
+
+class TestEnsurePipelineEntryBidrag:
+    def test_default_stage_upphandling(self, tmp_db):
+        pid = db.upsert_procurement(_make_proc())
+        db.ensure_pipeline_entry(pid)
+        item = db.get_pipeline_item(pid)
+        assert item["stage"] == "bevakad"
+
+    def test_default_stage_bidrag(self, tmp_db):
+        pid = db.upsert_procurement(_make_proc(
+            source="vinnova", source_id="VINN-PIPE", record_type="bidrag",
+        ))
+        db.ensure_pipeline_entry(pid)
+        item = db.get_pipeline_item(pid)
+        assert item["stage"] == "hittad"
+
+    def test_explicit_stage_overrides(self, tmp_db):
+        pid = db.upsert_procurement(_make_proc(
+            source="vinnova", source_id="VINN-OVR", record_type="bidrag",
+        ))
+        db.ensure_pipeline_entry(pid, stage="matchad")
+        item = db.get_pipeline_item(pid)
+        assert item["stage"] == "matchad"
+
+    def test_idempotent(self, tmp_db):
+        pid = db.upsert_procurement(_make_proc())
+        id1 = db.ensure_pipeline_entry(pid)
+        id2 = db.ensure_pipeline_entry(pid)
+        assert id1 == id2
+
+
+# ===========================================================================
+# TestCompanyCrud
+# ===========================================================================
+
+class TestCompanyCrud:
+    def test_create_company(self, tmp_db):
+        cid = db.create_company("HAST AB", "https://hast.se", "admin")
+        assert cid > 0
+        company = db.get_company(cid)
+        assert company["name"] == "HAST AB"
+        assert company["website_url"] == "https://hast.se"
+
+    def test_get_all_companies(self, tmp_db):
+        db.create_company("Alpha", "", "admin")
+        db.create_company("Beta", "", "admin")
+        companies = db.get_all_companies()
+        assert len(companies) == 2
+        names = [c["name"] for c in companies]
+        assert "Alpha" in names
+        assert "Beta" in names
+
+    def test_update_company(self, tmp_db):
+        cid = db.create_company("TestCo", "", "admin")
+        db.update_company(cid, industry="Konsult", website_url="https://test.se")
+        company = db.get_company(cid)
+        assert company["industry"] == "Konsult"
+        assert company["website_url"] == "https://test.se"
+
+    def test_delete_company(self, tmp_db):
+        cid = db.create_company("DeleteMe", "", "admin")
+        db.delete_company(cid)
+        assert db.get_company(cid) is None
+
+    def test_duplicate_name_raises(self, tmp_db):
+        db.create_company("Unique", "", "admin")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.create_company("Unique", "", "admin")

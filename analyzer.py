@@ -283,27 +283,44 @@ def analyze_procurement(procurement_id: int, force: bool = False, model: str = "
         trimmed = full_text[:8000]
         full_text_section = f"## Fullständig notistext\n{trimmed}"
 
-    # Build prompt
-    user_prompt = USER_PROMPT_TEMPLATE.format(
-        title=proc.get("title") or "Ej angiven",
-        buyer=proc.get("buyer") or "Ej angiven",
-        geography=proc.get("geography") or "Ej angiven",
-        cpv_codes=proc.get("cpv_codes") or "Ej angivet",
-        published_date=proc.get("published_date") or "Ej angivet",
-        deadline=proc.get("deadline") or "Ej angiven",
-        estimated_value=proc.get("estimated_value") or "Ej angivet",
-        currency=proc.get("currency") or "",
-        source=proc.get("source") or "Okänd",
-        description=proc.get("description") or "Ingen beskrivning tillgänglig.",
-        full_text_section=full_text_section,
-        hast_context=HAST_CONTEXT,
-    )
+    # Choose templates based on record_type
+    is_bidrag = proc.get("record_type") == "bidrag"
 
-    # Choose system prompt based on record_type
-    sys_prompt = BIDRAG_SYSTEM_PROMPT if proc.get("record_type") == "bidrag" else SYSTEM_PROMPT
+    # Build prompt
+    if is_bidrag:
+        est_val = proc.get("estimated_value")
+        budget_section = f"## Budgetram\n{est_val} {proc.get('currency') or ''}" if est_val else ""
+        user_prompt = BIDRAG_USER_PROMPT_TEMPLATE.format(
+            title=proc.get("title") or "Ej angiven",
+            buyer=proc.get("buyer") or "Ej angiven",
+            published_date=proc.get("published_date") or "Ej angivet",
+            deadline=proc.get("deadline") or "Ej angiven",
+            source=proc.get("source") or "Okänd",
+            budget_section=budget_section,
+            description=proc.get("description") or "Ingen beskrivning tillgänglig.",
+            full_text_section=full_text_section,
+            hast_context=BIDRAG_HAST_CONTEXT,
+        )
+    else:
+        user_prompt = USER_PROMPT_TEMPLATE.format(
+            title=proc.get("title") or "Ej angiven",
+            buyer=proc.get("buyer") or "Ej angiven",
+            geography=proc.get("geography") or "Ej angiven",
+            cpv_codes=proc.get("cpv_codes") or "Ej angivet",
+            published_date=proc.get("published_date") or "Ej angivet",
+            deadline=proc.get("deadline") or "Ej angiven",
+            estimated_value=proc.get("estimated_value") or "Ej angivet",
+            currency=proc.get("currency") or "",
+            source=proc.get("source") or "Okänd",
+            description=proc.get("description") or "Ingen beskrivning tillgänglig.",
+            full_text_section=full_text_section,
+            hast_context=HAST_CONTEXT,
+        )
+    sys_prompt = BIDRAG_SYSTEM_PROMPT if is_bidrag else SYSTEM_PROMPT
+    tool_schema = BIDRAG_ANALYSIS_TOOL if is_bidrag else ANALYSIS_TOOL
 
     # Try function calling first (structured output), fall back to text + parse
-    result = _call_ollama_tools(sys_prompt, user_prompt, model=model)
+    result = _call_ollama_tools(sys_prompt, user_prompt, model=model, tool=tool_schema)
 
     if result is None or not _validate_analysis_dict(result):
         logger.info("Function calling failed for procurement %d, falling back to text mode", procurement_id)
@@ -441,6 +458,92 @@ jordbruk, ren företagsstöd utan utbildningsfokus, innovationscheckar för prod
 
 Returnera ENBART JSON: {"relevant": true/false, "reasoning": "kort motivering på svenska"}"""
 
+BIDRAG_HAST_CONTEXT = """
+HAST Utveckling erbjuder konsulttjänster inom ledarskap, utbildning och organisationsutveckling.
+
+TJÄNSTEOMRÅDEN:
+- Ledarskapsutbildning: UGL, UL, utvecklande ledarskap, chefsprogram, ledarskapsprogram
+- Chefsutveckling: Executive coaching, chefscoaching, chefshandledning, individuell utveckling
+- Teamutveckling: Grupputveckling, ledningsgruppsutveckling, teambuilding, gruppdynamik
+- Organisationsutveckling: Förändringsledning, organisationsförändring, kulturförändring, arbetskultur
+- Kommunikation: Kommunikationsutbildning, kommunikationsträning, feedbackkultur, svåra samtal
+- HR-stöd: Stresshantering, konflikthantering, medarbetarutveckling, personaleffektivitet
+- Seminarier & workshops: Inspirationsföreläsningar, kunskapsseminarier, konferensinsatser
+
+LEVERANSFORMAT:
+- Projektpart/utförare i bidragsfinansierade kompetensutvecklingsprojekt
+- Skräddarsydda insatser anpassade till bidragets krav och projektplan
+- Certifierade UGL/UL-handledare
+- Både fysiskt och digitalt genomförande
+- Enskilda insatser och längre utvecklingsprogram
+
+STYRKOR I BIDRAGSKONTEXT:
+- Djup kompetens inom ledarskap och organisationsutveckling
+- Certifierade handledare (UGL, UL, ICF-coaching)
+- Erfarenhet av ESF-projekt och kompetensutvecklingsinsatser
+- Kan vara projektpart eller underleverantör i ansökningar
+- Kombination av utbildning + coaching + handledning i samma projekt
+
+TYPISKA MÅLGRUPPER FÖR BIDRAGSPROJEKT:
+- Regioner (Region Stockholm, Region Halland, Region Skåne etc.)
+- Kommuner (alla storlekar)
+- Statliga myndigheter
+- Offentliga bolag och organisationer
+"""
+
+BIDRAG_USER_PROMPT_TEMPLATE = """Analysera detta bidrag/denna utlysning åt HAST Utveckling:
+
+## Bidragsdata
+- Titel: {title}
+- Bidragsgivare: {buyer}
+- Publicerad: {published_date}
+- Deadline: {deadline}
+- Källa: {source}
+
+{budget_section}
+
+## Beskrivning från utlysningen
+{description}
+
+{full_text_section}
+
+## Om HAST Utveckling
+{hast_context}
+
+## Analysera enligt följande struktur:
+
+### 1. Kravsammanfattning
+- Vad kan sökas? (kompetensutveckling, organisationsutveckling, ledarskapsinsatser?)
+- Vem kan söka? (kommuner, regioner, organisationer, företag?)
+- Behörighetskrav och formella krav
+- Budgetram och finansieringsgrad
+- Tidsramar och projektperiod
+- OBS: Om detta INTE handlar om ledarskap/utbildning/organisationsutveckling, säg det tydligt.
+
+### 2. Matchningsanalys
+- Gå igenom HAST:s tjänsteområden och bedöm relevans som projektpart/utförare
+- Identifiera vilka insatser HAST kan leverera inom projektets ramar
+- Bedöm om HAST kan vara huvudutförare eller delutförare
+- Ge en tydlig matchningsgrad: **Hög** (>70% täckning), **Medel** (40-70%), **Låg** (<40%), eller **Ej relevant** (fel domän)
+- Lista konkreta styrkor och svagheter mot just detta bidrags krav
+
+### 3. Prisstrategi
+- Budgetplanering för HAST:s insatser i en ansökan:
+  - Typiska kostnader för utbildningsinsatser, coaching, workshops
+  - Uppskattning av omfattning (antal dagar/tillfällen/deltagare)
+  - Direkta vs indirekta kostnader
+- Medfinansieringskrav och egeninsats
+- Tips kring budgetposter som stärker ansökan
+
+### 4. Ansökningshjälp
+- Vilka styrkor bör lyftas i ansökan med HAST som utförare?
+- Vilka certifieringar och erfarenheter är relevanta (UGL, UL, ICF)?
+- Tips för att formulera projektmål och aktiviteter
+- Hur beskriva metodik, genomförande och uppföljning
+- Vilka mätbara resultat kan utlovas?
+
+Svara med ett JSON-objekt."""
+
 BIDRAG_SYSTEM_PROMPT = """Du är en senior bidragsrådgivare och expert på svenska bidrag, utlysningar och projektfinansiering.
 Du arbetar för HAST Utveckling som vill identifiera bidrag där deras kunder (kommuner, regioner, myndigheter)
 kan söka medel — och HAST kan vara utförare/projektpart.
@@ -528,6 +631,36 @@ ANALYSIS_TOOL = {
     },
 }
 
+BIDRAG_ANALYSIS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "submit_analysis",
+        "description": "Lämna in HAST-bidragsanalys med fyra sektioner",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "kravsammanfattning": {
+                    "type": "string",
+                    "description": "Vad bidraget handlar om, behörighetskrav, budgetram (markdown)",
+                },
+                "matchningsanalys": {
+                    "type": "string",
+                    "description": "Hur HAST kan vara utförare/projektpart (markdown)",
+                },
+                "prisstrategi": {
+                    "type": "string",
+                    "description": "Budgetplanering — typiska kostnader för HAST-insatser (markdown)",
+                },
+                "anbudshjalp": {
+                    "type": "string",
+                    "description": "Konkreta tips för att skriva en stark ansökan (markdown)",
+                },
+            },
+            "required": ["kravsammanfattning", "matchningsanalys", "prisstrategi", "anbudshjalp"],
+        },
+    },
+}
+
 
 def _call_ollama(system_prompt: str, user_msg: str, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", json_mode: bool = False) -> str | None:
     """Call local LLM via OpenAI-compatible API. Returns response text or None."""
@@ -554,11 +687,13 @@ def _call_ollama(system_prompt: str, user_msg: str, model: str = "Ministral-3-14
         return None
 
 
-def _call_ollama_tools(system_prompt: str, user_msg: str, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf") -> dict | None:
+def _call_ollama_tools(system_prompt: str, user_msg: str, model: str = "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf", tool: dict | None = None) -> dict | None:
     """Call local LLM with function calling to get structured JSON output.
 
     Returns parsed dict with the 4 analysis keys, or None on error.
     """
+    if tool is None:
+        tool = ANALYSIS_TOOL
     try:
         resp = httpx.post(
             f"{LLM_BASE_URL}/chat/completions",
@@ -569,7 +704,7 @@ def _call_ollama_tools(system_prompt: str, user_msg: str, model: str = "Ministra
                     {"role": "user", "content": user_msg},
                 ],
                 "temperature": 0.15,
-                "tools": [ANALYSIS_TOOL],
+                "tools": [tool],
                 "tool_choice": {"type": "function", "function": {"name": "submit_analysis"}},
             },
             timeout=600,

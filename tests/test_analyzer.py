@@ -334,3 +334,132 @@ class TestPrefilterProcurement:
     def test_missing_procurement(self, tmp_db, monkeypatch):
         result = ollama_prefilter_procurement(9999)
         assert result is None
+
+
+# ===========================================================================
+# TestBidragPrefilter — verifies bidrag prompt routing in prefilter
+# ===========================================================================
+
+class TestBidragPrefilter:
+    def test_bidrag_uses_bidrag_prefilter_prompt(self, tmp_db, monkeypatch):
+        """record_type=bidrag should use BIDRAG_PREFILTER_SYSTEM_PROMPT."""
+        proc_id = _insert_test_procurement(tmp_db, record_type="bidrag", source_id="TEST-BP-1")
+
+        prompts_received = []
+        def mock_ollama(system_prompt, user_msg, **kw):
+            prompts_received.append(system_prompt)
+            return '{"relevant": true, "reasoning": "Relevant bidrag"}'
+
+        monkeypatch.setattr("analyzer._call_ollama", mock_ollama)
+
+        result = ollama_prefilter_procurement(proc_id)
+        assert result is not None
+        assert result["relevant"] is True
+        assert len(prompts_received) == 1
+        assert "bidrag" in prompts_received[0].lower()
+
+    def test_upphandling_uses_standard_prefilter_prompt(self, tmp_db, monkeypatch):
+        """record_type=upphandling should use standard PREFILTER_SYSTEM_PROMPT."""
+        proc_id = _insert_test_procurement(tmp_db, record_type="upphandling", source_id="TEST-BP-2")
+
+        prompts_received = []
+        def mock_ollama(system_prompt, user_msg, **kw):
+            prompts_received.append(system_prompt)
+            return '{"relevant": false, "reasoning": "Not relevant"}'
+
+        monkeypatch.setattr("analyzer._call_ollama", mock_ollama)
+
+        result = ollama_prefilter_procurement(proc_id)
+        assert result is not None
+        assert result["relevant"] is False
+        assert len(prompts_received) == 1
+        assert "upphandling" in prompts_received[0].lower()
+
+    def test_bidrag_prefilter_irrelevant(self, tmp_db, monkeypatch):
+        proc_id = _insert_test_procurement(tmp_db, record_type="bidrag", source_id="TEST-BP-3")
+        monkeypatch.setattr(
+            "analyzer._call_ollama",
+            lambda *a, **kw: '{"relevant": false, "reasoning": "Teknisk FoU"}',
+        )
+        result = ollama_prefilter_procurement(proc_id)
+        assert result is not None
+        assert result["relevant"] is False
+        proc = db.get_procurement(proc_id)
+        assert proc["ai_relevance"] == "irrelevant"
+
+
+# ===========================================================================
+# TestBidragAnalysis — verifies bidrag prompt in deep analysis
+# ===========================================================================
+
+class TestBidragAnalysis:
+    def test_bidrag_uses_bidrag_system_prompt(self, tmp_db, monkeypatch):
+        """Bidrag analysis should use BIDRAG_SYSTEM_PROMPT."""
+        proc_id = _insert_test_procurement(tmp_db, record_type="bidrag", source_id="TEST-BA-1")
+
+        prompts_received = []
+        def mock_tools(system_prompt, user_msg, **kw):
+            prompts_received.append(system_prompt)
+            return _valid_analysis()
+
+        monkeypatch.setattr("analyzer._call_ollama_tools", mock_tools)
+        monkeypatch.setattr("analyzer.fetch_full_notice_text", lambda x: None)
+
+        result = analyze_procurement(proc_id, force=True)
+        assert result is not None
+        assert len(prompts_received) == 1
+        assert "bidragsrådgivare" in prompts_received[0].lower()
+
+    def test_bidrag_analysis_has_all_four_keys(self, tmp_db, monkeypatch):
+        proc_id = _insert_test_procurement(tmp_db, record_type="bidrag", source_id="TEST-BA-2")
+        monkeypatch.setattr("analyzer._call_ollama_tools", lambda *a, **kw: _valid_analysis())
+        monkeypatch.setattr("analyzer.fetch_full_notice_text", lambda x: None)
+
+        result = analyze_procurement(proc_id, force=True)
+        assert result is not None
+        for key in REQUIRED_ANALYSIS_KEYS:
+            assert key in result
+            assert result[key]  # non-empty
+
+
+# ===========================================================================
+# TestBidragPromptRouting — integration check
+# ===========================================================================
+
+class TestBidragPromptRouting:
+    def test_prefilter_dispatches_by_record_type(self, tmp_db, monkeypatch):
+        """Both record types should dispatch to different prompts."""
+        bidrag_id = _insert_test_procurement(tmp_db, record_type="bidrag", source_id="TEST-PR-1")
+        upphandling_id = _insert_test_procurement(tmp_db, record_type="upphandling", source_id="TEST-PR-2")
+
+        prompts = []
+        def capture_prompt(system_prompt, user_msg, **kw):
+            prompts.append(system_prompt)
+            return '{"relevant": true, "reasoning": "test"}'
+
+        monkeypatch.setattr("analyzer._call_ollama", capture_prompt)
+
+        ollama_prefilter_procurement(bidrag_id)
+        ollama_prefilter_procurement(upphandling_id)
+
+        assert len(prompts) == 2
+        assert prompts[0] != prompts[1]  # different prompts
+
+    def test_analysis_dispatches_by_record_type(self, tmp_db, monkeypatch):
+        """analyze_procurement should use different system prompts for bidrag vs upphandling."""
+        bidrag_id = _insert_test_procurement(tmp_db, record_type="bidrag", source_id="TEST-PR-3")
+        upphandling_id = _insert_test_procurement(tmp_db, record_type="upphandling", source_id="TEST-PR-4")
+
+        prompts = []
+        def capture_tools(system_prompt, user_msg, **kw):
+            prompts.append(system_prompt)
+            return _valid_analysis()
+
+        monkeypatch.setattr("analyzer._call_ollama_tools", capture_tools)
+        monkeypatch.setattr("analyzer.fetch_full_notice_text", lambda x: None)
+
+        analyze_procurement(bidrag_id, force=True)
+        analyze_procurement(upphandling_id, force=True)
+
+        assert len(prompts) == 2
+        assert prompts[0] != prompts[1]

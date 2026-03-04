@@ -835,8 +835,11 @@ STAGE_PROBABILITIES = {
 }
 
 
-def ensure_pipeline_entry(procurement_id: int, stage: str = "bevakad", assigned_to: str | None = None) -> int:
-    """Create a pipeline entry if one doesn't exist. Returns row id."""
+def ensure_pipeline_entry(procurement_id: int, stage: str | None = None, assigned_to: str | None = None) -> int:
+    """Create a pipeline entry if one doesn't exist. Returns row id.
+
+    If stage is None, auto-detects: "hittad" for bidrag, "bevakad" for upphandling.
+    """
     conn = get_connection()
     existing = conn.execute(
         "SELECT id FROM pipeline WHERE procurement_id = ?", (procurement_id,)
@@ -846,9 +849,12 @@ def ensure_pipeline_entry(procurement_id: int, stage: str = "bevakad", assigned_
         return existing["id"]
 
     proc = conn.execute(
-        "SELECT estimated_value FROM procurements WHERE id = ?", (procurement_id,)
+        "SELECT estimated_value, record_type FROM procurements WHERE id = ?", (procurement_id,)
     ).fetchone()
     est_val = proc["estimated_value"] if proc else None
+
+    if stage is None:
+        stage = "hittad" if proc and proc["record_type"] == "bidrag" else "bevakad"
 
     cur = conn.execute(
         """INSERT INTO pipeline (procurement_id, stage, assigned_to, estimated_value, probability)
@@ -1959,20 +1965,40 @@ def delete_company(company_id: int):
 # =====================================================================
 
 def save_bidrag_match(procurement_id: int, company_id: int, score: float, reasoning: str) -> int:
-    """Save or update a bidrag-company match. Returns row id."""
+    """Save or update a bidrag-company match. Preserves dismissed status. Returns row id."""
     conn = get_connection()
+    # Try insert first — if the row doesn't exist yet
     cur = conn.execute("""
-        INSERT INTO bidrag_company_matches (procurement_id, company_id, match_score, match_reasoning)
+        INSERT OR IGNORE INTO bidrag_company_matches (procurement_id, company_id, match_score, match_reasoning)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(procurement_id, company_id) DO UPDATE SET
-            match_score = excluded.match_score,
-            match_reasoning = excluded.match_reasoning,
-            created_at = datetime('now')
     """, (procurement_id, company_id, score, reasoning))
-    row_id = cur.lastrowid
+
+    if cur.rowcount == 0:
+        # Row already exists — update score/reasoning only if not dismissed
+        conn.execute("""
+            UPDATE bidrag_company_matches
+            SET match_score = ?, match_reasoning = ?, created_at = datetime('now')
+            WHERE procurement_id = ? AND company_id = ? AND status != 'dismissed'
+        """, (score, reasoning, procurement_id, company_id))
+
+    row = conn.execute(
+        "SELECT id FROM bidrag_company_matches WHERE procurement_id = ? AND company_id = ?",
+        (procurement_id, company_id),
+    ).fetchone()
+    row_id = row["id"] if row else cur.lastrowid
     conn.commit()
     conn.close()
     return row_id
+
+
+def get_bidrag_sources() -> list[str]:
+    """Return distinct sources for bidrag records, sorted alphabetically."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT source FROM procurements WHERE record_type = 'bidrag' ORDER BY source"
+    ).fetchall()
+    conn.close()
+    return [r["source"] for r in rows]
 
 
 def get_bidrag_matches(procurement_id: int) -> list[dict]:

@@ -4,10 +4,11 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 
 import httpx
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import db
 
@@ -40,28 +41,46 @@ Returnera ENBART giltig JSON, inget annat."""
 
 
 def _call_llm(system_prompt: str, user_msg: str, json_mode: bool = True) -> str | None:
-    """Call local LLM via OpenAI-compatible API. Returns response text or None."""
-    try:
-        payload: dict = {
-            "model": "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
-            "temperature": 0.1,
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-        resp = httpx.post(
-            f"{LLM_BASE_URL}/chat/completions",
-            json=payload,
-            timeout=600,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error("LLM error: %s", e)
-        return None
+    """Call local LLM via OpenAI-compatible API. Returns response text or None.
+
+    Retries once on timeout or 5xx errors.
+    """
+    payload: dict = {
+        "model": "Ministral-3-14B-Instruct-2512-Q4_K_M.gguf",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.1,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    for attempt in range(2):
+        try:
+            resp = httpx.post(
+                f"{LLM_BASE_URL}/chat/completions",
+                json=payload,
+                timeout=600,
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except httpx.TimeoutException:
+            if attempt == 0:
+                logger.warning("LLM timeout, retrying...")
+                continue
+            logger.error("LLM timeout after retry")
+            return None
+        except httpx.HTTPStatusError as e:
+            if attempt == 0 and e.response.status_code >= 500:
+                logger.warning("LLM %d error, retrying...", e.response.status_code)
+                continue
+            logger.error("LLM HTTP error: %s", e)
+            return None
+        except Exception as e:
+            logger.error("LLM error: %s", e)
+            return None
+    return None
 
 
 def fetch_website_text(url: str) -> str | None:
@@ -71,6 +90,10 @@ def fetch_website_text(url: str) -> str | None:
     # Ensure https
     if not url.startswith("http"):
         url = "https://" + url
+    # Only allow http/https schemes
+    if not url.startswith(("http://", "https://")):
+        logger.warning("Invalid URL scheme: %s", url[:50])
+        return None
     try:
         resp = httpx.get(
             url,
@@ -92,7 +115,7 @@ def fetch_website_text(url: str) -> str | None:
         return None
 
 
-def profile_company(company_id: int, on_progress: callable = None) -> dict | None:
+def profile_company(company_id: int, on_progress: Callable[[str], None] | None = None) -> dict | None:
     """Analyze a company's website and create an AI profile.
 
     Returns the parsed profile dict, or None on failure.
@@ -139,15 +162,15 @@ def profile_company(company_id: int, on_progress: callable = None) -> dict | Non
 
 
 def _keyword_score(keywords: list[str], text: str) -> float:
-    """Simple keyword overlap score 0-100."""
+    """Keyword overlap score 0-100 using word boundaries to avoid false positives."""
     if not keywords or not text:
         return 0.0
     text_lower = text.lower()
-    hits = sum(1 for kw in keywords if kw.lower() in text_lower)
+    hits = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw.lower()) + r'\b', text_lower))
     return min(100.0, (hits / max(len(keywords), 1)) * 100)
 
 
-def match_company_to_bidrag(company_id: int, on_progress: callable = None) -> list[dict]:
+def match_company_to_bidrag(company_id: int, on_progress: Callable[[str], None] | None = None) -> list[dict]:
     """Match a company against all bidrag. Returns list of match dicts."""
     company = db.get_company(company_id)
     if not company:
@@ -170,8 +193,10 @@ def match_company_to_bidrag(company_id: int, on_progress: callable = None) -> li
             on_progress("Inga nyckelord i profilen.")
         return []
 
-    # Get all bidrag
+    # Get all bidrag, filtering out expired ones
     bidrag = db.search_procurements(record_type="bidrag")
+    today = date.today().isoformat()
+    bidrag = [b for b in bidrag if not b.get("deadline") or b["deadline"] >= today]
     if not bidrag:
         if on_progress:
             on_progress("Inga bidrag i databasen.")
@@ -245,7 +270,7 @@ def match_company_to_bidrag(company_id: int, on_progress: callable = None) -> li
     return matches
 
 
-def match_all_companies(on_progress: callable = None) -> int:
+def match_all_companies(on_progress: Callable[[str], None] | None = None) -> int:
     """Run matching for all companies with AI profiles. Returns total match count."""
     companies = db.get_all_companies()
     total = 0
@@ -254,7 +279,7 @@ def match_all_companies(on_progress: callable = None) -> int:
             continue
         if on_progress:
             on_progress(f"Matchar: {company['name']}...")
-        matches = match_company_to_bidrag(company["id"])
+        matches = match_company_to_bidrag(company["id"], on_progress=on_progress)
         total += len(matches)
     if on_progress:
         on_progress(f"Klar! {total} matchningar totalt.")

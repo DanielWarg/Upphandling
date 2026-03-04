@@ -1,9 +1,9 @@
-"""Tests for scrapers/vinnova.py — offline parsing of Vinnova API responses."""
+"""Tests for scrapers/vinnova.py — offline parsing of Vinnova API responses + detail pages."""
 
 import json
 from pathlib import Path
 
-from scrapers.vinnova import _parse_items
+from scrapers.vinnova import _parse_items, _parse_detail_html
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vinnova_utlysningar.json"
 
@@ -88,3 +88,43 @@ class TestVinnovaParse:
         d = records[0].to_db_dict()
         assert d["record_type"] == "bidrag"
         assert d["source"] == "vinnova"
+
+
+# ===========================================================================
+# Detail page parsing
+# ===========================================================================
+DETAIL_FIXTURE = Path(__file__).parent / "fixtures" / "vinnova_detail.html"
+
+
+def _load_detail_fixture() -> str:
+    return DETAIL_FIXTURE.read_text(encoding="utf-8")
+
+
+class TestVinnovaDetailParse:
+    def test_extracts_deadline_stanger_den(self):
+        data = _parse_detail_html(_load_detail_fixture())
+        assert data["deadline"] == "2026-03-24"
+
+    def test_empty_html_returns_none(self):
+        data = _parse_detail_html("<html><body></body></html>")
+        assert data["deadline"] is None
+
+    def test_deadline_sista_ansokningsdag_inline(self):
+        html = '<html><body><p>24 mars 2026 kl 14:00 Sista ansökningsdag</p></body></html>'
+        data = _parse_detail_html(html)
+        assert data["deadline"] == "2026-03-24"
+
+    def test_deadline_sista_ansokningsdag_label(self):
+        html = '<html><body><p>Sista ansökningsdag: 5 maj 2026</p></body></html>'
+        data = _parse_detail_html(html)
+        assert data["deadline"] == "2026-05-05"
+
+    def test_deadline_abbreviated_month(self):
+        html = '<html><body><p>Stänger den 19 dec. 2025</p></body></html>'
+        data = _parse_detail_html(html)
+        assert data["deadline"] == "2025-12-19"
+
+    def test_deadline_without_den(self):
+        html = '<html><body><p>Stänger 1 november 2026</p></body></html>'
+        data = _parse_detail_html(html)
+        assert data["deadline"] == "2026-11-01"
