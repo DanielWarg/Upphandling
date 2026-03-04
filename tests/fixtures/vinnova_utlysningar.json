@@ -1,0 +1,52 @@
+[
+  {
+    "Diarienummer": "2026-00123",
+    "DiarienummerProgram": "2025-04000",
+    "Titel": "Kompetensutveckling för hållbar omställning i offentlig sektor",
+    "Beskrivning": "Utlysningen riktar sig till regioner och kommuner som vill stärka ledarskap och kompetensförsörjning inom förändringsledning och organisationsutveckling.",
+    "TitelEngelska": "Competence development for sustainable transition in public sector",
+    "BeskrivningEngelska": "This call targets regions and municipalities seeking to strengthen leadership and competence supply in change management and organizational development.",
+    "Publiceringsdatum": "2026-01-15T08:00:00",
+    "DokumentLista": [],
+    "LankLista": [],
+    "AnsokningsomgangDnrLista": ["2026-00124"],
+    "KontaktLista": [
+      {
+        "Namn": "Anna Svensson",
+        "Telefon": "08-555 123 45",
+        "Epost": "anna.svensson@vinnova.se",
+        "Roll": "Handläggare",
+        "KontaktID": 12345
+      }
+    ],
+    "Publik": 1
+  },
+  {
+    "Diarienummer": "2026-00456",
+    "DiarienummerProgram": "2025-04001",
+    "Titel": "Innovativa metoder för ledarskapsutveckling i kommuner",
+    "Beskrivning": "Vinnova finansierar projekt som utvecklar nya metoder för ledarskapsutveckling och chefsutveckling i kommunal verksamhet. Projekten ska bidra till ökad kompetens inom ledarskap.",
+    "TitelEngelska": "",
+    "BeskrivningEngelska": "",
+    "Publiceringsdatum": "2026-02-01T10:30:00",
+    "DokumentLista": [],
+    "LankLista": [],
+    "AnsokningsomgangDnrLista": [],
+    "KontaktLista": [],
+    "Publik": 1
+  },
+  {
+    "Diarienummer": "2026-00789",
+    "DiarienummerProgram": "2025-04002",
+    "Titel": "AI-baserad processoptimering i tillverkningsindustrin",
+    "Beskrivning": "Utlysning för teknisk FoU-projekt inom AI och maskininlärning för tillverkande företag.",
+    "TitelEngelska": "AI-based process optimization in manufacturing",
+    "BeskrivningEngelska": "",
+    "Publiceringsdatum": "2026-02-10T09:00:00",
+    "DokumentLista": [],
+    "LankLista": [],
+    "AnsokningsomgangDnrLista": [],
+    "KontaktLista": [],
+    "Publik": 1
+  }
+]

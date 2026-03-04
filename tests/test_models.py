@@ -25,8 +25,16 @@ class TestBasicValidation:
         assert r.title == "Test Procurement"
         assert r.score == 0
 
+    def test_default_record_type_is_upphandling(self):
+        r = _make_record()
+        assert r.record_type == "upphandling"
+
+    def test_bidrag_record_type(self):
+        r = _make_record(source="vinnova", record_type="bidrag")
+        assert r.record_type == "bidrag"
+
     def test_all_sources(self):
-        for src in ("ted", "mercell", "kommers", "eavrop"):
+        for src in ("ted", "mercell", "kommers", "eavrop", "vinnova", "tillvaxtverket"):
             r = _make_record(source=src)
             assert r.source == src
 
@@ -152,3 +160,13 @@ class TestToDbDict:
         r = _make_record()
         d = r.to_db_dict()
         assert "hash_fingerprint" not in d
+
+    def test_record_type_in_db_dict(self):
+        r = _make_record()
+        d = r.to_db_dict()
+        assert d["record_type"] == "upphandling"
+
+    def test_bidrag_record_type_in_db_dict(self):
+        r = _make_record(source="vinnova", record_type="bidrag")
+        d = r.to_db_dict()
+        assert d["record_type"] == "bidrag"

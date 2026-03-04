@@ -12,7 +12,8 @@ from pydantic import BaseModel, computed_field, field_validator, model_validator
 class TenderRecord(BaseModel):
     """Normalized procurement record used by all scrapers and db.py."""
 
-    source: Literal["ted", "mercell", "kommers", "eavrop"]
+    record_type: Literal["upphandling", "bidrag"] = "upphandling"
+    source: Literal["ted", "mercell", "kommers", "eavrop", "vinnova", "tillvaxtverket"]
     source_id: str
     title: str
     buyer: str | None = None
@@ -96,6 +97,7 @@ class TenderRecord(BaseModel):
     def to_db_dict(self) -> dict:
         """Convert to dict suitable for SQLite insertion via db.upsert_procurement."""
         return {
+            "record_type": self.record_type,
             "source": self.source,
             "source_id": self.source_id,
             "title": self.title,

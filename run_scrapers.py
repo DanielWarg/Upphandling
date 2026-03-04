@@ -107,6 +107,7 @@ def score_all(on_progress: Callable[[str], None] | None = None) -> int:
             description=p.get("description", ""),
             buyer=p.get("buyer", ""),
             cpv_codes=p.get("cpv_codes", ""),
+            record_type=p.get("record_type", "upphandling"),
         )
         update_score(p["id"], score, rationale, breakdown)
         if on_progress and (i + 1) % 50 == 0:
@@ -416,7 +417,7 @@ def main():
     parser.add_argument(
         "--sources",
         nargs="+",
-        choices=["ted", "mercell", "kommers", "eavrop"],
+        choices=["ted", "mercell", "kommers", "eavrop", "vinnova", "tillvaxtverket"],
         help="Kör bara specifika scrapers (standard: alla)",
     )
     parser.add_argument(

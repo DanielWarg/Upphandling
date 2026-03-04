@@ -70,8 +70,22 @@ def render_pipeline():
     mc3.metric("Vunna", summary.get("vunnen", {}).get("count", 0))
     mc4.metric("Förlorade", summary.get("forlorad", {}).get("count", 0))
 
+    # Type filter
+    type_choice = st.radio(
+        "Typ",
+        ["Alla", "Upphandlingar", "Bidrag"],
+        horizontal=True,
+        key="pipeline_type_filter",
+    )
+
     # Get all pipeline items
     all_items = get_pipeline_items()
+
+    # Filter by record_type
+    if type_choice == "Upphandlingar":
+        all_items = [i for i in all_items if i.get("record_type", "upphandling") == "upphandling"]
+    elif type_choice == "Bidrag":
+        all_items = [i for i in all_items if i.get("record_type") == "bidrag"]
 
     # Filter for KAM: only their assigned + unassigned
     if not is_chef:

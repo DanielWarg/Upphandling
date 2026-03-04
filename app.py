@@ -174,6 +174,7 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
 .tag-geo { background: var(--bg-3); color: var(--text-1); border: 1px solid var(--border); }
 .tag-dl { background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border); }
 .tag-val { background: rgba(34,197,94,0.08); color: #4ade80; border: 1px solid rgba(34,197,94,0.15); }
+.tag-bidrag { background: rgba(52,211,153,0.12); color: #34d399; border: 1px solid rgba(52,211,153,0.2); }
 .badge {
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 32px; height: 22px; border-radius: 4px; font-size: 11px; font-weight: 800;

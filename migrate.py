@@ -107,6 +107,21 @@ def migrate_v2_to_v3():
     print("Migration v2 → v3 klar!")
 
 
+def migrate_v3_to_v4():
+    """Migrate from v3 to v4 — add record_type column for bidragsbevakning."""
+    print("Migrerar v3 → v4...")
+
+    # init_db() handles adding the column if missing
+    init_db()
+
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (4)")
+    conn.commit()
+    conn.close()
+
+    print("Migration v3 → v4 klar!")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Databasmigrering")
     parser.add_argument("--status", action="store_true", help="Visa nuvarande schemaversion")
@@ -125,6 +140,9 @@ def main():
         current = 2
     if current < 3:
         migrate_v2_to_v3()
+        current = 3
+    if current < 4:
+        migrate_v3_to_v4()
     else:
         print("Databasen är redan uppdaterad.")
 

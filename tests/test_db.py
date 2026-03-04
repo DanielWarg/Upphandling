@@ -302,6 +302,38 @@ class TestAnalysisCRUD:
 # TestMissingData
 # ===========================================================================
 
+class TestRecordType:
+    def test_upsert_default_record_type(self, tmp_db):
+        row_id = db.upsert_procurement(_make_proc())
+        proc = db.get_procurement(row_id)
+        assert proc["record_type"] == "upphandling"
+
+    def test_upsert_bidrag_record_type(self, tmp_db):
+        data = _make_proc(source="vinnova", source_id="VINN-123", record_type="bidrag")
+        row_id = db.upsert_procurement(data)
+        proc = db.get_procurement(row_id)
+        assert proc["record_type"] == "bidrag"
+
+    def test_upsert_tender_record_with_record_type(self, tmp_db):
+        tr = _make_tender_record(source="vinnova", source_id="VINN-456", record_type="bidrag")
+        row_id = db.upsert_procurement(tr)
+        proc = db.get_procurement(row_id)
+        assert proc["record_type"] == "bidrag"
+
+    def test_search_by_record_type(self, tmp_db):
+        db.upsert_procurement(_make_proc(source_id="A", record_type="upphandling"))
+        db.upsert_procurement(_make_proc(source="vinnova", source_id="B", record_type="bidrag"))
+        results = db.search_procurements(record_type="bidrag")
+        assert len(results) == 1
+        assert results[0]["record_type"] == "bidrag"
+
+    def test_search_all_record_types(self, tmp_db):
+        db.upsert_procurement(_make_proc(source_id="A", record_type="upphandling"))
+        db.upsert_procurement(_make_proc(source="vinnova", source_id="B", record_type="bidrag"))
+        results = db.search_procurements(record_type="")
+        assert len(results) == 2
+
+
 class TestMissingData:
     def test_get_missing_buyer(self, tmp_db):
         db.upsert_procurement(_make_proc(source_id="A", buyer=None))

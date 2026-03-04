@@ -6,11 +6,16 @@ personaleffektivitet, executive coaching, seminarier och AI-workshops.
 Scoring:
 1. Sector gate — blockera irrelevanta sektorer (bygg, medicin, IT-drift etc)
 2. Utbildningsrelevans — matchar det HAST:s tjänsteområden?
+
+Profiles:
+- UPPHANDLING_PROFILE: offentlig upphandling (LOU)
+- BIDRAG_PROFILE: bidrag/utlysningar (Vinnova, Tillväxtverket, ESF)
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
 # Stage 1: Utbildnings-/utvecklingsgate — unambiguous signals
@@ -215,30 +220,128 @@ KNOWN_BUYERS = [
 ALL_KEYWORDS = {**HIGH_WEIGHT_KEYWORDS, **MEDIUM_WEIGHT_KEYWORDS, **BASE_WEIGHT_KEYWORDS}
 
 
+# ---------------------------------------------------------------------------
+# ScoringProfile — encapsulates all constants for a record_type
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ScoringProfile:
+    """Configuration for scoring a specific record type."""
+    gate_keywords: list[str]
+    blocked_sectors: dict[str, list[str]]
+    all_keywords: dict[str, int]
+    cpv_codes: dict[str, int]
+    cpv_prefixes: list[str]
+    known_buyers: list[str]
+    buyer_bonus: int = 8
+
+
+UPPHANDLING_PROFILE = ScoringProfile(
+    gate_keywords=EDUCATION_GATE_KEYWORDS,
+    blocked_sectors=BLOCKED_SECTORS,
+    all_keywords=ALL_KEYWORDS,
+    cpv_codes=HAST_CPV_CODES,
+    cpv_prefixes=EDUCATION_CPV_PREFIXES,
+    known_buyers=KNOWN_BUYERS,
+    buyer_bonus=8,
+)
+
+# ---------------------------------------------------------------------------
+# Bidragsprofil — nyckelord för Vinnova/Tillväxtverket/ESF-utlysningar
+# ---------------------------------------------------------------------------
+BIDRAG_GATE_KEYWORDS: list[str] = [
+    "bidrag", "anslag", "finansiering", "utlysning", "projektbidrag",
+    "kompetensutveckling", "omställningsstöd", "ledarskap",
+    "organisationsutveckling", "vinnova", "tillväxtverket",
+    "utbildning", "ledarskapsutveckling", "chefsutveckling",
+    "förändringsledning", "omställning", "coaching",
+    "medarbetarutveckling", "kompetensförsörjning",
+]
+
+BIDRAG_HIGH_KEYWORDS: dict[str, int] = {
+    "ledarskapsutveckling": 25,
+    "kompetensutveckling": 20,
+    "organisationsutveckling": 20,
+    "förändringsledning": 20,
+    "omställning": 15,
+}
+
+BIDRAG_MEDIUM_KEYWORDS: dict[str, int] = {
+    "coaching": 15,
+    "medarbetarutveckling": 15,
+    "kompetensförsörjning": 12,
+}
+
+BIDRAG_BASE_KEYWORDS: dict[str, int] = {
+    "utbildning": 5,
+    "bidrag": 5,
+    "projektbidrag": 8,
+}
+
+BIDRAG_ALL_KEYWORDS = {**BIDRAG_HIGH_KEYWORDS, **BIDRAG_MEDIUM_KEYWORDS, **BIDRAG_BASE_KEYWORDS}
+
+BIDRAG_BLOCKED_SECTORS: dict[str, list[str]] = {
+    "Teknik/FoU": [
+        "teknisk forskning", "materialteknik", "halvledare", "kvantdator",
+        "rymdteknik", "nanoteknik",
+    ],
+    "Infrastruktur": [
+        "infrastrukturprojekt", "vägbygge", "järnväg", "bredbandsutbyggnad",
+    ],
+    "IT-system": [
+        "systemutveckling", "mjukvaruutveckling", "ai-modell", "maskininlärning",
+        "cybersäkerhet", "molntjänst",
+    ],
+}
+
+BIDRAG_KNOWN_BUYERS: list[str] = [
+    "vinnova", "tillväxtverket", "europeiska socialfonden", "esf",
+    "arvsfonden", "forte", "formas",
+]
+
+BIDRAG_PROFILE = ScoringProfile(
+    gate_keywords=BIDRAG_GATE_KEYWORDS,
+    blocked_sectors=BIDRAG_BLOCKED_SECTORS,
+    all_keywords=BIDRAG_ALL_KEYWORDS,
+    cpv_codes={},
+    cpv_prefixes=[],
+    known_buyers=BIDRAG_KNOWN_BUYERS,
+    buyer_bonus=10,
+)
+
+_PROFILES: dict[str, ScoringProfile] = {
+    "upphandling": UPPHANDLING_PROFILE,
+    "bidrag": BIDRAG_PROFILE,
+}
+
+
 def sector_gate(
     title: str = "",
     description: str = "",
     buyer: str = "",
     cpv_codes: str = "",
+    profile: ScoringProfile | None = None,
 ) -> tuple[bool, str]:
     """Hard sector gate — blocks irrelevant sectors before scoring."""
+    if profile is None:
+        profile = UPPHANDLING_PROFILE
+
     text = f"{title} {description}".lower()
     buyer_lower = (buyer or "").lower()
     cpv_lower = (cpv_codes or "").lower()
     full_text = f"{text} {buyer_lower} {cpv_lower}"
 
     # Check blocked sectors
-    for sector, keywords in BLOCKED_SECTORS.items():
+    for sector, keywords in profile.blocked_sectors.items():
         for kw in keywords:
             if kw in full_text:
                 return False, f"Blockerad sektor ({sector}): {kw}"
 
     # Must have education/development signal
-    has_signal = any(kw in full_text for kw in EDUCATION_GATE_KEYWORDS)
+    has_signal = any(kw in full_text for kw in profile.gate_keywords)
 
-    if not has_signal:
+    if not has_signal and profile.cpv_prefixes:
         # Education CPV counts as signal — check each individual CPV code prefix
-        has_signal = _has_cpv_prefix(cpv_lower, EDUCATION_CPV_PREFIXES)
+        has_signal = _has_cpv_prefix(cpv_lower, profile.cpv_prefixes)
 
     if not has_signal:
         return False, "Ingen utbildnings-/utvecklingssignal"
@@ -263,9 +366,12 @@ def score_procurement(
     description: str = "",
     buyer: str = "",
     cpv_codes: str = "",
+    record_type: str = "upphandling",
 ) -> tuple[int, str, dict]:
     """Score a procurement for HAST relevance. Returns (score, rationale, breakdown)."""
-    gate_passed, gate_reason = sector_gate(title, description, buyer, cpv_codes)
+    profile = _PROFILES.get(record_type, UPPHANDLING_PROFILE)
+
+    gate_passed, gate_reason = sector_gate(title, description, buyer, cpv_codes, profile=profile)
     if not gate_passed:
         breakdown = {
             "gate_passed": False,
@@ -287,30 +393,30 @@ def score_procurement(
     keyword_matches: list[dict] = []
 
     matched.append("Utbildning/utveckling")
-    for keyword, weight in ALL_KEYWORDS.items():
+    for keyword, weight in profile.all_keywords.items():
         if keyword in full_text:
             total += weight
             matched.append(f"{keyword} (+{weight})")
             keyword_matches.append({"keyword": keyword, "weight": weight})
 
-    # Buyer bonus — offentlig sektor
+    # Buyer bonus
     buyer_bonus = 0
-    for known in KNOWN_BUYERS:
+    for known in profile.known_buyers:
         if known in buyer_lower:
-            buyer_bonus = 8
+            buyer_bonus = profile.buyer_bonus
             total += buyer_bonus
-            matched.append(f"offentlig köpare (+8)")
+            matched.append(f"känd köpare (+{buyer_bonus})")
             break
 
-    # CPV bonus — per-code match with HAST-specific weights
+    # CPV bonus — per-code match with profile-specific weights
     cpv_bonus = 0
     cpv_matched_codes: list[str] = []
     cpv_matches: list[dict] = []
-    if cpv_lower:
+    if cpv_lower and profile.cpv_codes:
         for code in cpv_lower.split(","):
             code = code.strip().split(":")[0].strip()
-            if code in HAST_CPV_CODES and code not in cpv_matched_codes:
-                bonus = HAST_CPV_CODES[code]
+            if code in profile.cpv_codes and code not in cpv_matched_codes:
+                bonus = profile.cpv_codes[code]
                 cpv_bonus += bonus
                 cpv_matched_codes.append(code)
                 cpv_matches.append({"code": code, "bonus": bonus})

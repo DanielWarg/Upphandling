@@ -22,6 +22,7 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS procurements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_type TEXT NOT NULL DEFAULT 'upphandling',
             source TEXT NOT NULL,
             source_id TEXT NOT NULL,
             title TEXT NOT NULL,
@@ -68,6 +69,11 @@ def init_db():
         conn.execute("ALTER TABLE procurements ADD COLUMN ai_relevance_reasoning TEXT")
     if "score_breakdown" not in existing_cols:
         conn.execute("ALTER TABLE procurements ADD COLUMN score_breakdown TEXT")
+    if "record_type" not in existing_cols:
+        conn.execute("ALTER TABLE procurements ADD COLUMN record_type TEXT NOT NULL DEFAULT 'upphandling'")
+
+    # Index for record_type filtering
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_record_type ON procurements(record_type)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS labels (
@@ -457,16 +463,17 @@ def upsert_procurement(data) -> int:
     try:
         cur = conn.execute("""
             INSERT INTO procurements
-                (source, source_id, title, buyer, geography, cpv_codes,
+                (record_type, source, source_id, title, buyer, geography, cpv_codes,
                  procedure_type, published_date, deadline, estimated_value,
                  currency, status, url, description, score, score_rationale,
                  created_at, updated_at)
             VALUES
-                (:source, :source_id, :title, :buyer, :geography, :cpv_codes,
+                (:record_type, :source, :source_id, :title, :buyer, :geography, :cpv_codes,
                  :procedure_type, :published_date, :deadline, :estimated_value,
                  :currency, :status, :url, :description, :score, :score_rationale,
                  :created_at, :updated_at)
         """, {
+            "record_type": data.get("record_type", "upphandling"),
             "source": data["source"],
             "source_id": data["source_id"],
             "title": data["title"],
@@ -491,6 +498,7 @@ def upsert_procurement(data) -> int:
         # Already exists — update
         conn.execute("""
             UPDATE procurements SET
+                record_type = :record_type,
                 title = :title,
                 buyer = :buyer,
                 geography = :geography,
@@ -508,6 +516,7 @@ def upsert_procurement(data) -> int:
                 updated_at = :updated_at
             WHERE source = :source AND source_id = :source_id
         """, {
+            "record_type": data.get("record_type", "upphandling"),
             "source": data["source"],
             "source_id": data["source_id"],
             "title": data["title"],
@@ -582,14 +591,20 @@ def search_procurements(
     max_score: int = 100,
     geography: str = "",
     ai_relevance: str = "",
+    record_type: str = "",
 ) -> list[dict]:
     """Search procurements with optional filters.
 
     ai_relevance: "relevant", "irrelevant", "unassessed", or "" (all).
+    record_type: "upphandling", "bidrag", or "" (all).
     """
     conn = get_connection()
     sql = "SELECT * FROM procurements WHERE score BETWEEN ? AND ?"
     params: list = [min_score, max_score]
+
+    if record_type:
+        sql += " AND record_type = ?"
+        params.append(record_type)
 
     if query:
         sql += " AND (title LIKE ? OR description LIKE ? OR buyer LIKE ?)"

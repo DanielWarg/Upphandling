@@ -92,6 +92,7 @@ def show_procurement_dialog(proc_id: int):
     <div class="dp">
         <div class="dp-title">{esc(proc.get("title", ""))}</div>
         <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
+            {'<span class="tag tag-bidrag">BIDRAG</span>' if proc.get("record_type") == "bidrag" else ""}
             <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
             <span class="badge {badge_cls(s)}">{s}/100</span>
         </div>
@@ -404,7 +405,11 @@ def _render_kanban():
                 _value = fmt_value(p.get("estimated_value"), p.get("currency"))
                 _label = get_label(p["id"])
 
-                tags = f'<span class="tag tag-src">{_source}</span>'
+                _record_type = p.get("record_type", "upphandling")
+                tags = ""
+                if _record_type == "bidrag":
+                    tags += '<span class="tag tag-bidrag">BIDRAG</span> '
+                tags += f'<span class="tag tag-src">{_source}</span>'
                 if _published:
                     tags += f' <span class="tag tag-geo">{_published}</span>'
                 if _deadline:
@@ -474,19 +479,32 @@ def _render_search():
     """Search and filter procurements."""
     current_user = st.session_state["current_user"]
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    UPPHANDLING_SOURCES = ["ted", "mercell", "kommers", "eavrop"]
+    BIDRAG_SOURCES = ["vinnova", "tillvaxtverket"]
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        query = st.text_input("Fritext", placeholder="t.ex. realtidssystem")
+        type_filter = st.selectbox("Typ", ["Alla", "Upphandlingar", "Bidrag"])
     with c2:
-        source_filter = st.selectbox("Källa", ["Alla", "ted", "mercell", "kommers", "eavrop"])
+        query = st.text_input("Fritext", placeholder="t.ex. realtidssystem")
     with c3:
-        geography_filter = st.text_input("Region", placeholder="t.ex. Stockholm")
+        if type_filter == "Upphandlingar":
+            source_options = ["Alla"] + UPPHANDLING_SOURCES
+        elif type_filter == "Bidrag":
+            source_options = ["Alla"] + BIDRAG_SOURCES
+        else:
+            source_options = ["Alla"] + UPPHANDLING_SOURCES + BIDRAG_SOURCES
+        source_filter = st.selectbox("Källa", source_options)
     with c4:
-        score_range = st.slider("Score", 0, 100, (0, 100))
+        geography_filter = st.text_input("Region", placeholder="t.ex. Stockholm")
     with c5:
+        score_range = st.slider("Score", 0, 100, (0, 100))
+    with c6:
         ai_filter = st.selectbox("AI Relevans", ["Alla", "Relevant", "Inte relevant", "Ej bedömd"])
 
     source_val = "" if source_filter == "Alla" else source_filter
+    type_val_map = {"Alla": "", "Upphandlingar": "upphandling", "Bidrag": "bidrag"}
+    record_type_val = type_val_map[type_filter]
     ai_val_map = {"Alla": "", "Relevant": "relevant", "Inte relevant": "irrelevant", "Ej bedömd": "unassessed"}
     ai_val = ai_val_map[ai_filter]
     results = search_procurements(
@@ -494,6 +512,7 @@ def _render_search():
         min_score=score_range[0], max_score=score_range[1],
         geography=geography_filter,
         ai_relevance=ai_val,
+        record_type=record_type_val,
     )
 
     st.markdown(f"**{len(results)}** resultat")

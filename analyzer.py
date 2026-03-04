@@ -299,12 +299,15 @@ def analyze_procurement(procurement_id: int, force: bool = False, model: str = "
         hast_context=HAST_CONTEXT,
     )
 
+    # Choose system prompt based on record_type
+    sys_prompt = BIDRAG_SYSTEM_PROMPT if proc.get("record_type") == "bidrag" else SYSTEM_PROMPT
+
     # Try function calling first (structured output), fall back to text + parse
-    result = _call_ollama_tools(SYSTEM_PROMPT, user_prompt, model=model)
+    result = _call_ollama_tools(sys_prompt, user_prompt, model=model)
 
     if result is None or not _validate_analysis_dict(result):
         logger.info("Function calling failed for procurement %d, falling back to text mode", procurement_id)
-        raw_text = _call_ollama(SYSTEM_PROMPT, user_prompt, model=model)
+        raw_text = _call_ollama(sys_prompt, user_prompt, model=model)
         if raw_text:
             result = _parse_analysis_json(raw_text)
 
@@ -413,6 +416,50 @@ allmän affärskonsulting utan utbildningsfokus,
 lantbruksrådgivning, jordbruksutbildning.
 
 Returnera ENBART JSON: {"relevant": true/false, "reasoning": "kort motivering på svenska"}"""
+
+
+# ---------------------------------------------------------------------------
+# Bidrag-specific prompts
+# ---------------------------------------------------------------------------
+BIDRAG_PREFILTER_SYSTEM_PROMPT = """Du är expert på svenska bidrag och utlysningar inom kompetensutveckling och organisationsutveckling.
+Bedöm om detta bidrag/denna utlysning är relevant för HAST Utveckling — ett konsultbolag som kan vara
+utförare/projektpart i ansökningar om bidrag för:
+
+- Ledarskapsutbildning, ledarskapsutveckling, chefsutveckling
+- Executive coaching, chefscoaching, handledning, mentorskap
+- Teamutveckling, grupputveckling, organisationsutveckling
+- Kommunikationsutbildning, konflikthantering, stresshantering
+- Förändringsledning, arbetskultur, medarbetarutveckling
+- Seminarier, workshops, inspirationsföreläsningar
+- Kompetensutvecklingsprojekt inom ledarskap och HR
+
+RELEVANT: Bidrag/utlysningar där kommuner, regioner eller organisationer kan söka medel för
+kompetensutveckling, ledarskapsinsatser, organisationsförändringar — och HAST kan vara utförare.
+
+IRRELEVANT: Teknisk FoU, produktutveckling, infrastruktur, IT-system, medicinsk forskning,
+jordbruk, ren företagsstöd utan utbildningsfokus, innovationscheckar för produkter.
+
+Returnera ENBART JSON: {"relevant": true/false, "reasoning": "kort motivering på svenska"}"""
+
+BIDRAG_SYSTEM_PROMPT = """Du är en senior bidragsrådgivare och expert på svenska bidrag, utlysningar och projektfinansiering.
+Du arbetar för HAST Utveckling som vill identifiera bidrag där deras kunder (kommuner, regioner, myndigheter)
+kan söka medel — och HAST kan vara utförare/projektpart.
+
+DIN EXPERTIS OMFATTAR:
+- ESF (Europeiska socialfonden) — kompetensutvecklingsprojekt
+- Vinnovas utlysningar — innovativa arbetssätt, organisationsutveckling
+- Tillväxtverkets program — regional kompetensutveckling, omställning
+- Arvsfondens utlysningar — samhällsinsatser med utbildningsfokus
+
+Svara ALLTID på svenska. Var konkret och handlingsorienterad.
+
+Du ska returnera ett JSON-objekt med exakt dessa fyra nycklar:
+- "kravsammanfattning": Vad bidraget handlar om, behörighetskrav, budgetram (markdown)
+- "matchningsanalys": Hur HAST kan vara utförare/projektpart — vilka insatser matchar (markdown)
+- "prisstrategi": Budgetplanering — typiska kostnader för HAST-insatser i ansökningar (markdown)
+- "anbudshjalp": Konkreta tips för att skriva en stark ansökan med HAST som utförare (markdown)
+
+Returnera BARA JSON-objektet, ingen annan text runtomkring."""
 
 
 def _parse_prefilter_json(raw_text: str) -> dict | None:
@@ -557,7 +604,10 @@ def ollama_prefilter_procurement(proc_id: int, model: str = "Ministral-3-14B-Ins
 
     user_msg = f"Titel: {title}\nKöpare: {buyer}\nCPV: {cpv}\nBeskrivning: {desc}"
 
-    raw_text = _call_ollama(PREFILTER_SYSTEM_PROMPT, user_msg, model=model)
+    # Choose prompt based on record_type
+    system_prompt = BIDRAG_PREFILTER_SYSTEM_PROMPT if proc.get("record_type") == "bidrag" else PREFILTER_SYSTEM_PROMPT
+
+    raw_text = _call_ollama(system_prompt, user_msg, model=model)
     if raw_text is None:
         return None
 
