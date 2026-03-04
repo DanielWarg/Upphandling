@@ -70,15 +70,34 @@ def fmt_value(val, cur) -> str:
 # ---------------------------------------------------------------------------
 # Detail dialog (same as Fas1)
 # ---------------------------------------------------------------------------
-@st.dialog("Upphandling", width="large")
 def show_procurement_dialog(proc_id: int):
-    """Native Streamlit dialog with details, feedback and AI analysis."""
+    """Dispatch to typed dialog based on record_type."""
+    proc = get_procurement(proc_id)
+    if proc and proc.get("record_type") == "bidrag":
+        _show_bidrag_dialog(proc_id)
+    else:
+        _show_upphandling_dialog(proc_id)
+
+
+@st.dialog("Bidrag", width="large")
+def _show_bidrag_dialog(proc_id: int):
+    _render_detail_content(proc_id)
+
+
+@st.dialog("Upphandling", width="large")
+def _show_upphandling_dialog(proc_id: int):
+    _render_detail_content(proc_id)
+
+
+def _render_detail_content(proc_id: int):
+    """Shared dialog content for both upphandling and bidrag."""
     current_user = st.session_state["current_user"]
     proc = get_procurement(proc_id)
     if not proc:
         st.error("Upphandlingen hittades inte.")
         return
 
+    is_bidrag = proc.get("record_type") == "bidrag"
     s = proc.get("score") or 0
     bc = bar_color(s)
     value_str = fmt_value(proc.get("estimated_value"), proc.get("currency")) or "Ej angivet"
@@ -88,24 +107,31 @@ def show_procurement_dialog(proc_id: int):
         else '<span style="color:var(--text-3)">Ej tillgänglig</span>'
     )
 
+    # Build field rows based on record type
+    buyer_label = "Bidragsgivare" if is_bidrag else "Köpare"
+    value_label = "Maxbelopp" if is_bidrag else "Uppskattat värde"
+
+    rows_html = f'<div class="dp-row"><div class="dp-lbl">{buyer_label}</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>'
+    rows_html += f'<div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>'
+    if not is_bidrag:
+        rows_html += f'<div class="dp-row"><div class="dp-lbl">CPV-koder</div><div class="dp-val">{esc(proc.get("cpv_codes") or "Ej angivet")}</div></div>'
+        rows_html += f'<div class="dp-row"><div class="dp-lbl">Förfarandetyp</div><div class="dp-val">{esc(proc.get("procedure_type") or "Ej angiven")}</div></div>'
+    rows_html += f'<div class="dp-row"><div class="dp-lbl">Publicerad</div><div class="dp-val">{esc(proc.get("published_date") or "Okänt")}</div></div>'
+    rows_html += f'<div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>'
+    rows_html += f'<div class="dp-row"><div class="dp-lbl">{value_label}</div><div class="dp-val">{value_str}</div></div>'
+    rows_html += f'<div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Länk</div><div class="dp-val">{url_html}</div></div>'
+
     st.markdown(f"""
     <div class="dp">
         <div class="dp-title">{esc(proc.get("title", ""))}</div>
         <div style="margin:12px 0 16px;display:flex;align-items:center;gap:8px">
-            {'<span class="tag tag-bidrag">BIDRAG</span>' if proc.get("record_type") == "bidrag" else ""}
+            {'<span class="tag tag-bidrag">BIDRAG</span>' if is_bidrag else ""}
             <span class="tag tag-src">{esc((proc.get("source") or "").upper())}</span>
             <span class="badge {badge_cls(s)}">{s}/100</span>
         </div>
         <div class="score-track"><div class="score-fill" style="width:{s}%;background:{bc}"></div></div>
         <div style="font-size:11px;color:var(--text-2);margin:6px 0 18px">{esc(proc.get("score_rationale") or "Ej scorad")}</div>
-        <div class="dp-row"><div class="dp-lbl">Köpare</div><div class="dp-val">{esc(proc.get("buyer") or "Okänd")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Geografi</div><div class="dp-val">{esc(proc.get("geography") or "Ej angiven")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">CPV-koder</div><div class="dp-val">{esc(proc.get("cpv_codes") or "Ej angivet")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Förfarandetyp</div><div class="dp-val">{esc(proc.get("procedure_type") or "Ej angiven")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Publicerad</div><div class="dp-val">{esc(proc.get("published_date") or "Okänt")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Deadline</div><div class="dp-val">{esc(proc.get("deadline") or "Ej angiven")}</div></div>
-        <div class="dp-row"><div class="dp-lbl">Uppskattat värde</div><div class="dp-val">{value_str}</div></div>
-        <div class="dp-row" style="border-bottom:none"><div class="dp-lbl">Länk</div><div class="dp-val">{url_html}</div></div>
+        {rows_html}
     </div>
     """, unsafe_allow_html=True)
 
@@ -292,13 +318,16 @@ def show_procurement_dialog(proc_id: int):
                 st.error(f"Fel: {e}")
 
     if cached:
-        with st.expander("Kravsammanfattning", expanded=True):
+        krav_label = "Krav & villkor" if is_bidrag else "Kravsammanfattning"
+        pris_label = "Budgettips" if is_bidrag else "Prisstrategi"
+        anbud_label = "Ansökningshjälp" if is_bidrag else "Anbudshjälp"
+        with st.expander(krav_label, expanded=True):
             st.markdown(cached.get("kravsammanfattning") or "Ingen data.")
         with st.expander("Matchningsanalys", expanded=True):
             st.markdown(cached.get("matchningsanalys") or "Ingen data.")
-        with st.expander("Prisstrategi", expanded=False):
+        with st.expander(pris_label, expanded=False):
             st.markdown(cached.get("prisstrategi") or "Ingen data.")
-        with st.expander("Anbudshjälp", expanded=False):
+        with st.expander(anbud_label, expanded=False):
             st.markdown(cached.get("anbudshjalp") or "Ingen data.")
 
         meta_parts = []
@@ -321,7 +350,7 @@ def render_procurements():
     """Render procurements page with Kanban + Sök & Filter + Feedback tabs."""
     st.markdown(
         '<div class="topbar"><h1>Upphandlingar</h1>'
-        '<p>Kanban, sök och feedback</p></div>',
+        '<p>Kanban, sok och feedback</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -359,8 +388,8 @@ def _render_kanban():
         )
         return
 
-    # Filter: only scored (>0) and not AI-irrelevant, sort by newest
-    visible = [p for p in all_procs if (p.get("score") or 0) > 0 and p.get("ai_relevance") != "irrelevant"]
+    # Filter: only upphandlingar, scored (>0) and not AI-irrelevant, sort by newest
+    visible = [p for p in all_procs if (p.get("score") or 0) > 0 and p.get("ai_relevance") != "irrelevant" and p.get("record_type", "upphandling") != "bidrag"]
     visible.sort(key=lambda p: p.get("published_date") or "", reverse=True)
     high = [p for p in visible if (p.get("score") or 0) >= 60]
     med = [p for p in visible if 30 <= (p.get("score") or 0) < 60]
@@ -479,32 +508,20 @@ def _render_search():
     """Search and filter procurements."""
     current_user = st.session_state["current_user"]
 
-    UPPHANDLING_SOURCES = ["ted", "mercell", "kommers", "eavrop"]
-    BIDRAG_SOURCES = ["vinnova", "tillvaxtverket"]
-
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        type_filter = st.selectbox("Typ", ["Alla", "Upphandlingar", "Bidrag"])
-    with c2:
         query = st.text_input("Fritext", placeholder="t.ex. realtidssystem")
-    with c3:
-        if type_filter == "Upphandlingar":
-            source_options = ["Alla"] + UPPHANDLING_SOURCES
-        elif type_filter == "Bidrag":
-            source_options = ["Alla"] + BIDRAG_SOURCES
-        else:
-            source_options = ["Alla"] + UPPHANDLING_SOURCES + BIDRAG_SOURCES
+    with c2:
+        source_options = ["Alla", "ted", "mercell", "kommers", "eavrop"]
         source_filter = st.selectbox("Källa", source_options)
-    with c4:
+    with c3:
         geography_filter = st.text_input("Region", placeholder="t.ex. Stockholm")
-    with c5:
+    with c4:
         score_range = st.slider("Score", 0, 100, (0, 100))
-    with c6:
+    with c5:
         ai_filter = st.selectbox("AI Relevans", ["Alla", "Relevant", "Inte relevant", "Ej bedömd"])
 
     source_val = "" if source_filter == "Alla" else source_filter
-    type_val_map = {"Alla": "", "Upphandlingar": "upphandling", "Bidrag": "bidrag"}
-    record_type_val = type_val_map[type_filter]
     ai_val_map = {"Alla": "", "Relevant": "relevant", "Inte relevant": "irrelevant", "Ej bedömd": "unassessed"}
     ai_val = ai_val_map[ai_filter]
     results = search_procurements(
@@ -512,7 +529,7 @@ def _render_search():
         min_score=score_range[0], max_score=score_range[1],
         geography=geography_filter,
         ai_relevance=ai_val,
-        record_type=record_type_val,
+        record_type="upphandling",
     )
 
     st.markdown(f"**{len(results)}** resultat")
@@ -554,7 +571,7 @@ def _render_search():
 
         # Quick add to pipeline
         st.markdown("---")
-        sel_id = st.number_input("Upphandlings-ID att visa/lägga till i pipeline", min_value=1, step=1, key="search_proc_id")
+        sel_id = st.number_input("ID att visa/lägga till i pipeline", min_value=1, step=1, key="search_proc_id")
         sc1, sc2 = st.columns(2)
         with sc1:
             if st.button("Visa detaljer", key="search_show"):

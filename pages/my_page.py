@@ -266,9 +266,11 @@ def render_my_page():
     col_proc, col_cal = st.columns(2)
 
     with col_proc:
+        has_bidrag = any(p.get("record_type") == "bidrag" for p in visible)
+        widget_title = "Upphandlingar & Bidrag" if has_bidrag else "Upphandlingar"
         badge = f'<span class="wh-badge">{len(visible)} relevanta</span>' if visible else ""
         st.markdown(
-            f'<div class="widget"><div class="widget-head"><span>Upphandlingar</span>{badge}</div>'
+            f'<div class="widget"><div class="widget-head"><span>{widget_title}</span>{badge}</div>'
             f'<div class="widget-body">',
             unsafe_allow_html=True,
         )
@@ -294,7 +296,11 @@ def render_my_page():
                 if get_analysis(p["id"]):
                     indicators += '<span style="font-size:9px;font-weight:700;color:#60a5fa;margin-left:4px">AI</span>'
 
-                tags = f'<span class="pcard-tag" style="background:var(--orange-dim);color:var(--orange-light);border:1px solid rgba(249,115,22,0.2)">{source}</span>'
+                _record_type = p.get("record_type", "upphandling")
+                tags = ""
+                if _record_type == "bidrag":
+                    tags += '<span class="tag tag-bidrag">BIDRAG</span> '
+                tags += f'<span class="pcard-tag" style="background:var(--orange-dim);color:var(--orange-light);border:1px solid rgba(249,115,22,0.2)">{source}</span>'
                 if buyer:
                     tags += f' <span style="font-size:10px;color:var(--text-2)">{buyer}</span>'
                 if deadline:

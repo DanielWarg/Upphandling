@@ -105,15 +105,18 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             procurement_id INTEGER NOT NULL UNIQUE,
             stage TEXT NOT NULL DEFAULT 'bevakad'
-                CHECK(stage IN ('bevakad','kvalificerad','anbud_pagaende','inskickad','vunnen','forlorad')),
+                CHECK(stage IN ('bevakad','kvalificerad','anbud_pagaende','inskickad','vunnen','forlorad',
+                                'hittad','matchad','ansokan_pagar','beviljad','avslagen')),
             assigned_to TEXT,
             estimated_value REAL,
             probability INTEGER DEFAULT 0 CHECK(probability BETWEEN 0 AND 100),
             notes TEXT,
             updated_by TEXT,
+            company_id INTEGER,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (procurement_id) REFERENCES procurements(id)
+            FOREIGN KEY (procurement_id) REFERENCES procurements(id),
+            FOREIGN KEY (company_id) REFERENCES companies(id)
         )
     """)
 
@@ -241,6 +244,33 @@ def init_db():
     """)
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            website_url TEXT,
+            industry TEXT,
+            ai_profile TEXT,
+            ai_profile_updated_at TEXT,
+            created_by TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bidrag_company_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            procurement_id INTEGER NOT NULL REFERENCES procurements(id),
+            company_id INTEGER NOT NULL REFERENCES companies(id),
+            match_score REAL,
+            match_reasoning TEXT,
+            status TEXT DEFAULT 'suggested',
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(procurement_id, company_id)
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
             applied_at TEXT DEFAULT (datetime('now'))
@@ -256,6 +286,11 @@ def init_db():
     if "user_username" not in _label_cols:
         conn.execute("ALTER TABLE labels ADD COLUMN user_username TEXT")
 
+    # Add company_id to pipeline if missing
+    _pipeline_cols = {row[1] for row in conn.execute("PRAGMA table_info(pipeline)").fetchall()}
+    if "company_id" not in _pipeline_cols:
+        conn.execute("ALTER TABLE pipeline ADD COLUMN company_id INTEGER")
+
     # Create indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_buyer ON procurements(buyer)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_account ON procurements(account_id)")
@@ -265,12 +300,15 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_procurements_score ON procurements(score)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_assigned ON pipeline(assigned_to)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON pipeline(stage)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_company ON pipeline(company_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_username)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_procurement ON notifications(procurement_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_user)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_watch_list_user ON watch_list(user_username)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_procurement ON calendar_events(procurement_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(event_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bidrag_matches_procurement ON bidrag_company_matches(procurement_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bidrag_matches_company ON bidrag_company_matches(company_id)")
 
     # Seed schema version
     conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
@@ -756,6 +794,26 @@ def get_stats() -> dict:
 
 PIPELINE_STAGES = ["bevakad", "kvalificerad", "anbud_pagaende", "inskickad", "vunnen", "forlorad"]
 
+BIDRAG_PIPELINE_STAGES = ["hittad", "matchad", "ansokan_pagar", "inskickad", "beviljad", "avslagen"]
+
+BIDRAG_STAGE_LABELS = {
+    "hittad": "Hittad",
+    "matchad": "Matchad",
+    "ansokan_pagar": "Ansökan pågår",
+    "inskickad": "Inskickad",
+    "beviljad": "Beviljad",
+    "avslagen": "Avslagen",
+}
+
+BIDRAG_STAGE_PROBABILITIES = {
+    "hittad": 5,
+    "matchad": 15,
+    "ansokan_pagar": 40,
+    "inskickad": 75,
+    "beviljad": 100,
+    "avslagen": 0,
+}
+
 STAGE_LABELS = {
     "bevakad": "Bevakad",
     "kvalificerad": "Kvalificerad",
@@ -763,6 +821,7 @@ STAGE_LABELS = {
     "inskickad": "Inskickad",
     "vunnen": "Vunnen",
     "forlorad": "Förlorad",
+    **BIDRAG_STAGE_LABELS,
 }
 
 STAGE_PROBABILITIES = {
@@ -772,6 +831,7 @@ STAGE_PROBABILITIES = {
     "inskickad": 75,
     "vunnen": 100,
     "forlorad": 0,
+    **BIDRAG_STAGE_PROBABILITIES,
 }
 
 
@@ -1809,7 +1869,7 @@ def purge_expired(max_age_days: int = 90) -> dict:
     old_no_deadline = len(ids) - had_deadline
 
     # Delete from child tables first (foreign keys)
-    for table in ("analyses", "labels", "pipeline", "procurement_notes"):
+    for table in ("analyses", "labels", "pipeline", "procurement_notes", "bidrag_company_matches"):
         conn.execute(f"DELETE FROM {table} WHERE procurement_id IN ({placeholders})", ids)
 
     # Delete procurements
@@ -1832,5 +1892,134 @@ def update_procurement_fields(procurement_id: int, **kwargs):
     params = list(updates.values())
     params.append(procurement_id)
     conn.execute(f"UPDATE procurements SET {', '.join(fields)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
+
+
+# =====================================================================
+# Companies CRUD
+# =====================================================================
+
+def create_company(name: str, website_url: str = "", created_by: str = "") -> int:
+    """Create a new company. Returns row id."""
+    conn = get_connection()
+    cur = conn.execute(
+        "INSERT INTO companies (name, website_url, created_by) VALUES (?, ?, ?)",
+        (name, website_url or None, created_by or None),
+    )
+    row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def update_company(company_id: int, **kwargs):
+    """Update company fields (industry, ai_profile, website_url, name)."""
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    fields = ["updated_at = ?"]
+    params: list = [now]
+    for key in ("name", "website_url", "industry", "ai_profile", "ai_profile_updated_at"):
+        if key in kwargs:
+            fields.append(f"{key} = ?")
+            params.append(kwargs[key])
+    params.append(company_id)
+    conn.execute(f"UPDATE companies SET {', '.join(fields)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
+
+
+def get_all_companies() -> list[dict]:
+    """Return all companies."""
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM companies ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_company(company_id: int) -> dict | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_company(company_id: int):
+    """Delete a company and its matches."""
+    conn = get_connection()
+    conn.execute("DELETE FROM bidrag_company_matches WHERE company_id = ?", (company_id,))
+    conn.execute("UPDATE pipeline SET company_id = NULL WHERE company_id = ?", (company_id,))
+    conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+    conn.commit()
+    conn.close()
+
+
+# =====================================================================
+# Bidrag–Company match CRUD
+# =====================================================================
+
+def save_bidrag_match(procurement_id: int, company_id: int, score: float, reasoning: str) -> int:
+    """Save or update a bidrag-company match. Returns row id."""
+    conn = get_connection()
+    cur = conn.execute("""
+        INSERT INTO bidrag_company_matches (procurement_id, company_id, match_score, match_reasoning)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(procurement_id, company_id) DO UPDATE SET
+            match_score = excluded.match_score,
+            match_reasoning = excluded.match_reasoning,
+            created_at = datetime('now')
+    """, (procurement_id, company_id, score, reasoning))
+    row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_bidrag_matches(procurement_id: int) -> list[dict]:
+    """Get all company matches for a bidrag."""
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT m.*, c.name as company_name, c.website_url, c.industry
+        FROM bidrag_company_matches m
+        JOIN companies c ON m.company_id = c.id
+        WHERE m.procurement_id = ?
+        ORDER BY m.match_score DESC
+    """, (procurement_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_company_matches(company_id: int) -> list[dict]:
+    """Get all bidrag matches for a company."""
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT m.*, p.title, p.buyer, p.deadline, p.score, p.source
+        FROM bidrag_company_matches m
+        JOIN procurements p ON m.procurement_id = p.id
+        WHERE m.company_id = ?
+        ORDER BY m.match_score DESC
+    """, (company_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_match_status(match_id: int, status: str):
+    """Update match status (accepted/dismissed/suggested)."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE bidrag_company_matches SET status = ? WHERE id = ?",
+        (status, match_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_pipeline_company(procurement_id: int, company_id: int | None):
+    """Link/unlink a company to a pipeline entry."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE pipeline SET company_id = ? WHERE procurement_id = ?",
+        (company_id, procurement_id),
+    )
     conn.commit()
     conn.close()

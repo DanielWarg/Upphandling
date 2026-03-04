@@ -324,11 +324,13 @@ except Exception:
 # ---------------------------------------------------------------------------
 from pages.my_page import render_my_page
 from pages.procurements import render_procurements
+from pages.bidrag import render_bidrag
 from pages.chat import render_chat
 
 nav_pages = [
     st.Page(render_my_page, title="Min sida", default=True, url_path=""),
     st.Page(render_procurements, title="Upphandlingar", url_path="upphandlingar"),
+    st.Page(render_bidrag, title="Bidrag", url_path="bidrag"),
     st.Page(render_chat, title="AI-assistent", url_path="chat"),
 ]
 

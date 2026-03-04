@@ -44,17 +44,17 @@ def render_admin():
 # ---------------------------------------------------------------------------
 
 def _render_fetch_section():
-    st.subheader("Hamta upphandlingar")
+    st.subheader("Hamta upphandlingar & bidrag")
 
     sources = st.multiselect(
         "Valj kallor",
-        options=["ted", "kommers", "eavrop", "mercell"],
+        options=["ted", "kommers", "eavrop", "mercell", "vinnova", "tillvaxtverket"],
         default=["ted", "kommers", "eavrop"],
     )
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Hamta upphandlingar", use_container_width=True):
+        if st.button("Hamta data", use_container_width=True):
             _run_scrape(sources)
 
     with col2:

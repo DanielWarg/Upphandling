@@ -122,6 +122,60 @@ def migrate_v3_to_v4():
     print("Migration v3 → v4 klar!")
 
 
+def migrate_v4_to_v5():
+    """Migrate from v4 to v5 — add companies, bidrag_company_matches tables, rebuild pipeline with new CHECK."""
+    print("Migrerar v4 → v5...")
+
+    conn = get_connection()
+
+    # Rebuild pipeline table to expand CHECK constraint with bidrag stages
+    print("  Bygger om pipeline-tabell med nya steg...")
+    conn.execute("ALTER TABLE pipeline RENAME TO pipeline_old")
+    conn.execute("""
+        CREATE TABLE pipeline (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            procurement_id INTEGER NOT NULL UNIQUE,
+            stage TEXT NOT NULL DEFAULT 'bevakad'
+                CHECK(stage IN ('bevakad','kvalificerad','anbud_pagaende','inskickad','vunnen','forlorad',
+                                'hittad','matchad','ansokan_pagar','beviljad','avslagen')),
+            assigned_to TEXT,
+            estimated_value REAL,
+            probability INTEGER DEFAULT 0 CHECK(probability BETWEEN 0 AND 100),
+            notes TEXT,
+            updated_by TEXT,
+            company_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (procurement_id) REFERENCES procurements(id),
+            FOREIGN KEY (company_id) REFERENCES companies(id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO pipeline (id, procurement_id, stage, assigned_to, estimated_value,
+                              probability, notes, updated_by, created_at, updated_at)
+        SELECT id, procurement_id, stage, assigned_to, estimated_value,
+               probability, notes, updated_by, created_at, updated_at
+        FROM pipeline_old
+    """)
+    conn.execute("DROP TABLE pipeline_old")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_assigned ON pipeline(assigned_to)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON pipeline(stage)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_company ON pipeline(company_id)")
+
+    conn.commit()
+    conn.close()
+
+    # init_db() creates the new tables (companies, bidrag_company_matches) and indexes
+    init_db()
+
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (5)")
+    conn.commit()
+    conn.close()
+
+    print("Migration v4 → v5 klar!")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Databasmigrering")
     parser.add_argument("--status", action="store_true", help="Visa nuvarande schemaversion")
@@ -143,6 +197,9 @@ def main():
         current = 3
     if current < 4:
         migrate_v3_to_v4()
+        current = 4
+    if current < 5:
+        migrate_v4_to_v5()
     else:
         print("Databasen är redan uppdaterad.")
 
