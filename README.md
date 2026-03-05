@@ -1,20 +1,30 @@
 # Upphandlingsbevakning
 
-Svenskt verktyg for att bevaka offentliga upphandlingar inom ledarskap, utbildning och organisationsutveckling. Byggt for HAST Utvecklings saljteam.
+Svenskt verktyg för att bevaka offentliga upphandlingar och bidrag inom ledarskap, utbildning och organisationsutveckling. Byggt för HAST Utvecklings säljteam (3 KAM + 1 säljchef + 1 admin).
 
-Scrapar TED, KommersAnnons och e-Avrop, scorar leads med nyckelordsbaserad 2-stegs gate, kor AI-analys med lokal LLM (Ministral 3 14B), och hanterar en 6-stegs saljpipeline.
+Scrapar sex källor, scorar leads med nyckelordsbaserad 2-stegs gate, kör AI-analys med lokal LLM (Ministral 3 14B), och hanterar säljpipeline + bidragspipeline.
 
 ## Funktioner
 
-- **Automatisk skrapning** — TED API, KommersAnnons, e-Avrop med exponentiell backoff
-- **2-stegs scoring** — Sektor-gate + viktade nyckelord/CPV-koder (0-100 poang)
-- **AI-analys** — Prefilter + djupanalys med function calling (kravsammanfattning, matchning, prisstrategi)
-- **Saljpipeline** — 6 steg: bevakad, kvalificerad, anbud pagar, inskickad, vunnen, forlorad
-- **Fleranvandarstod** — KAM, saljchef och admin-roller med bcrypt-auth
-- **Kundkonton** — 33 seedade konton med auto-lankning via buyer-alias
+**Upphandlingar**
+- **Automatisk skrapning** — TED, KommersAnnons, e-Avrop, Mercell med exponentiell backoff
+- **2-stegs scoring** — Sektorgate + viktade nyckelord/CPV-koder (0–100 poäng)
+- **AI-analys** — Prefilter + djupanalys med function calling (kravsammanfattning, matchning, prisstrategi, anbudshjälp)
+- **Säljpipeline** — 6 steg: bevakad → kvalificerad → anbud pågår → inskickad → vunnen/förlorad
+
+**Bidrag**
+- **Bidragsbevakning** — Vinnova (API) och Tillväxtverket (RSS + Playwright-detaljer)
+- **Bidragspipeline** — 6 steg: hittad → matchad → ansökan pågår → inskickad → beviljad/avslagen
+- **Företagsregister** — Kundföretag med AI-profilering via webbplatsanalys
+- **Automatisk matchning** — Nyckelordsscoring + AI-matchning av företag mot bidrag
+
+**Gemensamt**
+- **Fleranvändarstöd** — KAM, säljchef och admin-roller med bcrypt-auth
+- **Kundkonton** — 33 seedade konton med auto-länkning via buyer-alias
 - **Bevakningslistor** — Nyckelords- och kontobevakningar med notiser
+- **AI-assistent** — Intern chatt med RAG-sökning mot upphandlingsdatabasen
 - **Admin-dashboard** — Manuell skrapning, scoring, datarensning, systemstatus
-- **Intern chatt, kalender, notiser** — Teamsamarbete i dashboarden
+- **Kalender & notiser** — Deadlines och teamsamarbete i dashboarden
 
 ## Installation
 
@@ -24,35 +34,37 @@ cd Upphandling
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Mercell kräver Playwright (valfritt)
+playwright install chromium
 ```
 
-## Anvandning
+## Användning
 
 ```bash
 # Starta dashboard
 streamlit run app.py
 
-# Kor scraping + full pipeline
+# Kör scraping + full pipeline
 python3 run_scrapers.py
 
-# Bara specifik kalla
+# Bara specifik källa
 python3 run_scrapers.py --sources ted
+python3 run_scrapers.py --sources vinnova,tillvaxtverket
 
 # Omscora utan skrapning
 python3 run_scrapers.py --score-only
 
-# Hoppa over AI-djupanalys
+# Hoppa över AI-djupanalys
 python3 run_scrapers.py --skip-analysis
 ```
 
 ## AI-analys (valfritt)
 
-Kraver lokal llama-server med Ministral 3 14B:
+Kräver lokal llama-server med Ministral 3 14B:
 
 ```bash
-# Ladda ner modell
-# Placera GGUF i ~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf
-
+# Placera GGUF i ~/.cache/models/
 # Starta server
 llama-server \
   --model ~/.cache/models/Ministral-3-14B-Instruct-2512-Q4_K_M.gguf \
@@ -62,31 +74,50 @@ llama-server \
 echo "LLM_BASE_URL=http://localhost:8081/v1" > .env
 ```
 
+AI-analys används för:
+- Prefilter (snabb relevanscheck) av upphandlingar och bidrag
+- Djupanalys med function calling (kravsammanfattning, matchningsanalys, prisstrategi, anbuds-/ansökningshjälp)
+- Företagsprofilering via webbplatsanalys
+- Matchning av företag mot bidrag/utlysningar
+
 ## Inloggning
 
-| Roll | Anvandare | Losenord |
+| Roll | Användare | Lösenord |
 |------|-----------|----------|
 | Admin | admin | admin |
 | KAM | anna_lindberg | changeme123 |
 | KAM | erik_svensson | changeme123 |
 | KAM | maria_johansson | changeme123 |
-| Saljchef | peter_nilsson | changeme123 |
+| Säljchef | peter_nilsson | changeme123 |
 
 ## Tester
 
 ```bash
-python3 -m pytest tests/ -v          # alla 71 tester
+python3 -m pytest tests/ -v               # alla 309 tester
 python3 -m pytest tests/test_scorer.py -v  # specifik fil
 ```
 
 ## Teknikstack
 
-- **Frontend**: Streamlit (multi-page, dark SaaS-tema)
-- **Databas**: SQLite (WAL-mode, 15 tabeller)
-- **Skrapning**: httpx + BeautifulSoup
-- **AI**: llama-server + Ministral 3 14B (function calling)
+- **Frontend**: Streamlit (multi-page, svart/orange SaaS-tema)
+- **Databas**: SQLite (WAL-mode, 17 tabeller, 14 index)
+- **Skrapning**: httpx + BeautifulSoup + Playwright (Mercell/Vinnova/Tillväxtverket)
+- **AI**: llama-server + Ministral 3 14B (function calling, JSON-mode)
 - **Auth**: streamlit-authenticator (bcrypt, cookie-sessions)
 - **Modeller**: Pydantic (TenderRecord med validering)
+
+## Arkitektur
+
+```
+Scrapers (TED/KommersAnnons/e-Avrop/Mercell/Vinnova/Tillväxtverket)
+  → list[TenderRecord]
+  → db.upsert_procurement()
+  → scorer.score_procurement()       (2-stegs gate → 0-100)
+  → analyzer.ollama_prefilter_all()  (AI-relevanscheck)
+  → analyzer.analyze_all_relevant()  (djupanalys med function calling)
+  → db.ensure_pipeline_entry()       (score>0 + relevant → pipeline)
+  → db.auto_link_procurements_to_accounts()
+```
 
 ## Licens
 
